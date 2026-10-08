@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<title>Habitab – Setup</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { display: flex; flex-direction: column; background: var(--page); }
+  header { display: flex; gap: 14px; align-items: center; padding: 38px 28px 18px; -webkit-app-region: drag; }
+  header img { width: 52px; height: 52px; flex: none; }
+  h1 { font-size: 18px; margin: 0 0 3px; }
+  #summary { margin: 0; color: var(--text-2); }
+  main { flex: 1; overflow: auto; padding: 0 28px 20px; }
+  h2 { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 18px 4px 6px; }
+  .hint { font-size: 12px; color: var(--text-2); margin: 6px 4px 0; }
+  .hint kbd { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--field); border-radius: 4px; padding: 0 4px; }
+
+  /* Grouped list, like macOS settings */
+  .card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .item + .item { border-top: 1px solid var(--border); }
+  .line { display: flex; gap: 10px; align-items: center; min-height: 40px; padding: 7px 12px; }
+  .line .lead { width: 18px; display: flex; justify-content: center; flex: none; }
+  .line .lead input { margin: 0; }
+  .line .what { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; }
+  .line .name { font-weight: 600; }
+  .line .client { width: 14px; height: 14px; flex: none; align-self: center; color: var(--text); }
+  .line .client svg { width: 14px; height: 14px; display: block; }
+  .line .client-name { color: var(--text-2); font-size: 12px; white-space: nowrap; }
+  .line .where { color: var(--text-3); font-size: 12px; }
+  .line .state { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+  .line .state.ok { color: var(--green); }
+  .line .state.todo { color: var(--accent); }
+  .line .state.warn { color: var(--orange); }
+  .line button.more { color: var(--text-3); padding: 2px 4px; }
+  .line .more-space { width: 24px; flex: none; }
+  .line button.more .icon { transition: transform .15s; }
+  .item.open button.more .icon { transform: rotate(90deg); }
+  .item.dim .name, .item.dim .lead { opacity: .55; }
+  .lead .icon { width: 15px; height: 15px; }
+  .lead .ok { color: var(--green); }
+  .lead .off { color: var(--text-3); }
+  .lead .warn { color: var(--orange); }
+  .more-body { display: none; padding: 0 12px 10px 40px; }
+  .item.open .more-body { display: block; }
+  .more-body p { margin: 0 0 6px; font-size: 12px; color: var(--text-2); }
+  .more-body .label { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+  code { font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; display: block; color: var(--text-2); word-break: break-all; -webkit-user-select: text; user-select: text; }
+
+  .banner { margin: 4px 0 4px; padding: 9px 12px; border-radius: 8px; font-size: 12.5px; }
+  .banner.ok { color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
+  .banner.bad { color: var(--red); background: color-mix(in srgb, var(--red) 9%, transparent); }
+  .banner div + div { margin-top: 3px; }
+
+  footer { display: flex; gap: 8px; align-items: center; padding: 12px 28px; border-top: 1px solid var(--border); }
+  footer .grow { flex: 1; }
+  footer button { padding: 6px 12px; }
+  footer #uninstall { color: var(--text-2); padding-left: 0; padding-right: 0; }
+  footer #uninstall:hover:not(:disabled) { color: var(--red); background: none; }
+  .primary { background: var(--accent); color: #fff; min-width: 84px; }
+  .primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+  button.quit { color: var(--red); font-size: 12px; }
+</style>
+<header>
+  <img src="icon.png" alt="">
+  <div>
+    <h1>Setup</h1>
+    <p id="summary">Checking configurations…</p>
+  </div>
+</header>
+<main id="main"></main>
+<footer>
+  <button id="uninstall">Remove Habitab from Configurations…</button>
+  <span class="grow"></span>
+  <span id="busy" class="muted"></span>
+  <button id="rescan">Check Again</button>
+  <button id="apply" class="primary">Done</button>
+</footer>
+<script src="icons.js"></script>
+<script src="client-icons.js"></script>
+<script src="setup.js"></script>

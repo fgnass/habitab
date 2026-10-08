@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Handle between page and DevTools; during a drag the view covers the whole area. */
+  html, body { cursor: col-resize; background: transparent; }
+  body::after { content: ''; position: fixed; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--border); }
+  body:hover::after, body.drag::after { background: var(--accent); width: 2px; left: 2px; }
+  body.drag::after { display: none; }
+</style>
+<script src="splitter.js"></script>

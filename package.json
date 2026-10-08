@@ -1,0 +1,53 @@
+{
+  "name": "habitab",
+  "productName": "Habitab",
+  "version": "0.2.0",
+  "description": "One home for your agent browsers",
+  "main": "dist/app/main.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "start": "npm run build && electron .",
+    "preview": "npm run build && node tests/integration/showcase.mjs",
+    "test": "npm run build && node --test dist/tests/unit/*.test.js",
+    "test:integration": "npm run build && node tests/integration/run.mjs",
+    "dist": "npm run build && electron-builder --mac --dir && node scripts/sign.mjs"
+  },
+  "build": {
+    "appId": "dev.habitab.Habitab",
+    "productName": "Habitab",
+    "files": [
+      "dist/**",
+      "package.json",
+      "!dist/tests/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": "dir",
+      "icon": "build/icon.icns",
+      "identity": null
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Development"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "asar": false,
+    "directories": {
+      "output": "release"
+    }
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "@types/ws": "^8.18.2",
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.3"
+  }
+}

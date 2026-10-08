@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Lies exactly over the page: drag a rectangle, then write a comment. */
+  html, body { background: transparent; cursor: crosshair; overflow: hidden; }
+  #shade { position: fixed; inset: 0; background: rgba(0, 0, 0, .18); }
+  #rect { position: fixed; display: none; border: 2px solid var(--accent); border-radius: 3px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .28); background: transparent; }
+  body.has-rect #shade { display: none; }
+  #hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 12px; border-radius: 9px; font-size: 12.5px;
+    color: var(--text); background: var(--page); box-shadow: 0 4px 18px rgba(0,0,0,.22), 0 0 0 .5px var(--border); display: flex; gap: 8px; align-items: center; cursor: default; }
+  #hint b { font-weight: 600; }
+  #hint .muted { white-space: nowrap; }
+  #form { position: fixed; display: none; width: 320px; padding: 10px; border-radius: 10px; background: var(--page); cursor: default;
+    box-shadow: 0 8px 28px rgba(0,0,0,.25), 0 0 0 .5px var(--border); }
+  #form textarea { width: 100%; min-height: 64px; resize: vertical; border: 0; outline: 0; border-radius: 7px; padding: 7px 8px; background: var(--field);
+    font: inherit; color: inherit; -webkit-user-select: text; user-select: text; }
+  #form textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+  #form .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  #form .row .grow { flex: 1; font-size: 11.5px; color: var(--text-3); }
+  #form button { padding: 5px 10px; }
+  #send { background: var(--accent); color: #fff; display: flex; gap: 6px; align-items: center; }
+  #send:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+</style>
+<div id="shade"></div>
+<div id="rect"></div>
+<div id="hint"><span id="hintText"></span><span class="muted">· Esc to cancel</span></div>
+<div id="form">
+  <textarea id="text" placeholder="What about this area?"></textarea>
+  <div class="row">
+    <span class="grow" id="target"></span>
+    <button id="cancel">Cancel</button>
+    <button id="send"><span data-icon="send" class="small"></span><span id="sendText">Send</span></button>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="annotate.js"></script>

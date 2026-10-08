@@ -1,0 +1,187 @@
+# Habitab – one home for your agent browsers
+
+Habitab is **one** app for the browsers of parallel Claude Code and Codex
+sessions. On the left, sessions are grouped by project (with client, current
+tool call and tabs); on the right is the real Chromium browser of the selected
+session with docked DevTools. One Dock icon, no extra Chrome process, every
+session isolated.
+
+The official [Chrome DevTools MCP Server](https://github.com/ChromeDevTools/chrome-devtools-mcp)
+runs unchanged; Habitab only puts a launcher in front of it.
+
+## Architecture
+
+```
+Claude Code / Codex
+   │ stdio (MCP)
+   ▼
+habitab mcp -- npx -y chrome-devtools-mcp@latest --isolated        Launcher
+   │  • starts the original command as a child process; launch options
+   │    (--isolated, --headless, …) are replaced by --browserUrl
+   │  • --browserUrl points to a local port of the launcher; the first
+   │    access starts the app if needed and gets the session browser
+   │  • observes MCP: clientInfo, roots, tool calls, _meta.threadId
+   ▼                                   Unix socket (0600) / named pipe
+Habitab.app (Electron)
+   • per session: its own in-memory partition (cookies, storage, cache)
+     and tabs as embedded Chromium views
+   • one CDP proxy per session: the MCP server only sees the tabs of its
+     session; new tabs/popups land in the same session
+   • sidebar: one row per session with a small live thumbnail of its current tab
+     (stable order, older tabs folded away); full width or thumbnails only (⌘\),
+     View → Show Sidebar (⌃⌘S) hides it
+   • persistent profile per project (optional): cookies, localStorage, IndexedDB,
+     service workers and cache are stored on disk and survive app restarts; one
+     live session uses the profile, parallel ones start with a copy of its cookies
+   • docked DevTools (resizable), address bar
+   • responsive mode (⇧⌘M): fills the free space by default (zoom: fit); drag
+     handles like Chrome's, Tailwind breakpoints (sm–2xl), device presets
+   • take control: a click or key press in a page holds the agent's next
+     tool calls; it goes on after 10 s without input, when you switch to
+     another app, or on Resume
+   • agents never raise the window (bringToFront only switches the tab)
+   • feedback: the launcher adds a `wait_for_user_feedback` tool; the user marks an
+     area of the page (⇧⌘A) and writes a comment; the agent gets comment, URL,
+     elements and the area as an image. Without a waiting agent it is kept for the
+     next call (and copied to the clipboard)
+   • Claude Code channel: started with
+     `claude --dangerously-load-development-channels server:chrome-devtools`
+     (the name of the server entry), a marked area reaches Claude at once as a
+     channel event; Claude then calls `wait_for_user_feedback` for the details.
+     Channels are a research preview; Habitab is not on Anthropic's allowlist,
+     hence the development flag (with a warning dialog at every start)
+```
+
+Why Electron: Chromium runs in the app process, so there is only one Dock icon
+and no processes that can become orphaned. Partitions, embedded views and
+docked DevTools are built in. The architecture isolates platform-specific code in
+`src/shared/platform.ts`; Linux and Windows are prepared but not tested.
+
+The launcher runs on the app's Node runtime (`ELECTRON_RUN_AS_NODE`), so no
+separate Node is needed. If the app is not installed, the launcher script runs the
+original command unchanged.
+
+## Installation
+
+```bash
+git clone <repo> habitab && cd habitab
+./install.sh
+```
+
+The script checks Node (≥ 20) and npm, builds the app, installs it to
+`/Applications` (without write access: `~/Applications`) and starts it. The app
+then offers the MCP setup (see [Setup](#setup)). The script itself changes no
+client configuration. The first build downloads Electron.
+
+| Option | Effect |
+|---|---|
+| `--prefix DIR` | different target folder |
+| `--uninstall` | restore configurations, remove the app, optionally delete data |
+| `--uninstall --yes` | same, delete data without asking |
+
+Running it again updates an existing installation.
+
+## Development
+
+```bash
+npm install
+npm start          # electron .
+npm run preview    # look at changes before installing: separate instance with demo sessions
+npm run dist       # release/*/Habitab.app (ad-hoc signed)
+```
+
+On startup the app creates the launcher script:
+`~/Library/Application Support/Habitab/bin/habitab` (Linux: `~/.local/share/habitab/bin/habitab`).
+
+## Setup
+
+In the app: **Habitab → Setup …** (⌘,). Or from the CLI with the launcher script:
+
+```bash
+habitab setup            # preview
+habitab setup --apply    # apply
+habitab uninstall        # restore
+habitab status           # configurations, sessions that need a restart, old MCP browsers
+```
+
+| Location | Handling |
+|---|---|
+| Claude Code, user and local scope (`~/.claude.json`) | via `claude mcp remove/add-json` (official CLI) |
+| Claude Code, project `.mcp.json` | file stays unchanged; local override with the same name |
+| Codex `config.toml`, profile files | only `command`/`args` are replaced, all other bytes stay (tool approvals, comments) |
+| Codex, project files of trusted projects | offered, not preselected |
+| OpenCode (`~/.config/opencode/opencode.json[c]`, project `opencode.json[c]`), Cursor (`~/.cursor/mcp.json`, `.cursor/mcp.json`), Gemini CLI (`~/.gemini/settings.json`, `.gemini/settings.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`) | JSON/JSONC via [jsonc-parser](https://www.npmjs.com/package/jsonc-parser): only the `command`/`args` values are replaced in place, comments and formatting stay; project files only in projects Claude Code or Codex know, not preselected |
+| Plugins, managed configuration, inline TOML | shown, not changed |
+
+- `--browserUrl`, `--wsEndpoint`, `--autoConnect`: managed externally, never migrated.
+- `--userDataDir`: fixed profile, not migrated.
+- `--proxyServer`, `--acceptInsecureCerts`, `--viewport` apply to the session;
+  `--executablePath`, `--channel`, `--chromeArg` have no effect (built-in Chromium).
+- Backups in `backups/`, manifest `install-manifest.json`. Safe to run repeatedly.
+- Uninstall never copies backups back. It finds the wrapped entries, takes the
+  original command from the wrapper (`habitab mcp -- <original>`) and changes
+  only `command`/`args`. Unchanged entries are restored byte for byte; entries
+  changed later are only unwrapped, your changes stay. Files listed in the
+  manifest are always checked, also Codex projects that are no longer trusted.
+- Running sessions need a restart; setup and `status` list them.
+
+## Session mapping (measured)
+
+| | Claude Code 2.1.292 | Codex 0.159.1 |
+|---|---|---|
+| Client | `clientInfo.name = claude-code` | `clientInfo.name = codex-mcp-client` |
+| Project | `CLAUDE_PROJECT_DIR`, roots, cwd | cwd, Git root |
+| Chat session | `CLAUDE_CODE_SESSION_ID`; after `/clear` matched against `~/.claude/sessions/<pid>.json` (unofficial) | `_meta.threadId` of each tool call |
+
+If an identifier is missing, Habitab shows that and does not invent one.
+
+## Lifecycle
+
+- The app starts on an agent's first browser access (in the background);
+  so does a session's browser.
+- Session end (stdin EOF, signal, launcher crash): all tabs close and the
+  partition is cleared. Exception: pinned, or used by you in the last 5 min –
+  then the browser stays open ("Ended · browser open", closes after
+  30 min without use).
+- App restart: sessions are gone; launchers reconnect, and the next
+  tool call gets a fresh browser.
+- Inactive ≠ ended: hidden sessions without activity are throttled by
+  Chromium after 5 min; agent activity, running traces/screencasts and your
+  use lift the throttling.
+- Take control (⇧⌘P): new tool calls wait until you resume (max. 10 min).
+- Errors appear as a notice in the sidebar and in the log, never as a blocking dialog.
+
+Network: the app's debug port, the session proxies and the launcher ports bind
+only to `127.0.0.1`. The socket is accessible only to your own user.
+
+## Tests
+
+```bash
+npm test                  # unit tests
+npm run test:integration  # app + launcher + real chrome-devtools-mcp; installer in sandbox
+```
+
+All tests use their own `HABITAB_HOME`/`HABITAB_SOCKET` and do not touch a real
+installation. They run invisibly (no Dock icon, no focus); `HABITAB_TEST_VISIBLE=1` shows the window. Among other things, the integration tests check: separate tabs/cookies/storage,
+parallel screenshots in visible and hidden sessions, `new_page`/`close_page`,
+popups with `window.opener`, exact `resize_page`, DevTools in parallel with the agent,
+take control (manual and automatic, agent input does not count), responsive mode
+shared with the agent's `emulate`, the window never takes focus, no Chrome process,
+exactly one Dock entry, session end,
+launcher crash, app restart.
+
+## Limitations
+
+- Chromium of the Electron version (currently 152), a few weeks behind Chrome.
+- No Chrome Sync, no Chrome extensions.
+- New windows from `window.open` become tabs of the session.
+- Downloads go to `~/Downloads`. Permissions (camera, location, notifications)
+  are denied by default.
+- Linux/Windows: prepared, not tested. App ad-hoc signed, not notarized.
+
+The earlier Swift version (headless + screencast) is in `archive/swift-headless/`.
+
+## Third-party assets
+
+- UI icons: [Lucide](https://lucide.dev) (ISC), in `src/ui/icons.js`.
+- Client logos: [lobe-icons](https://github.com/lobehub/lobe-icons) (MIT), in `src/ui/client-icons.js`. The logos are trademarks of their owners.

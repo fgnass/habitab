@@ -1,0 +1,58 @@
+:root {
+  color-scheme: light dark;
+  --text: #1d1d1f;
+  --text-2: rgba(0, 0, 0, .55);
+  --text-3: rgba(0, 0, 0, .38);
+  --hover: rgba(0, 0, 0, .05);
+  --selected: rgba(0, 0, 0, .085);
+  --tab-active: rgba(255, 255, 255, .85);
+  --border: rgba(0, 0, 0, .1);
+  --field: rgba(0, 0, 0, .055);
+  --bar: #f6f6f6;
+  --accent: #0a84ff;
+  --green: #30b158;
+  --orange: #f39c12;
+  --red: #e5484d;
+  --purple: #8e5bd8;
+  --claude: #d97757;
+  --codex: #10a37f;
+  --page: #ffffff;
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #f2f2f7;
+    --text-2: rgba(255, 255, 255, .6);
+    --text-3: rgba(255, 255, 255, .38);
+    --hover: rgba(255, 255, 255, .06);
+    --selected: rgba(255, 255, 255, .1);
+    --tab-active: rgba(255, 255, 255, .14);
+    --border: rgba(255, 255, 255, .1);
+    --field: rgba(255, 255, 255, .08);
+    --bar: #2b2b2d;
+    --page: #1e1e1e;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; color: var(--text); -webkit-user-select: none; user-select: none; cursor: default; }
+button { font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; padding: 4px 6px; }
+button:hover:not(:disabled) { background: var(--hover); }
+button:disabled { opacity: .35; }
+input { font: inherit; color: inherit; }
+.icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.icon.small { width: 12px; height: 12px; }
+.badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 9px; white-space: nowrap; }
+.badge.claude { color: var(--claude); background: color-mix(in srgb, var(--claude) 15%, transparent); }
+.badge.codex { color: var(--codex); background: color-mix(in srgb, var(--codex) 15%, transparent); }
+.badge.none { color: var(--text-2); background: var(--field); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot.connected { background: var(--green); }
+.dot.idle { background: var(--text-3); }
+.dot.disconnected { background: var(--orange); }
+.dot.ended { background: var(--red); opacity: .6; }
+.dot.kept { background: var(--purple); }
+.dot.tool { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<link rel="stylesheet" href="style.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; background: var(--bar); border-bottom: 1px solid var(--border); font-size: 12px; overflow: hidden; }
+  select, input { font: inherit; color: inherit; height: 24px; border: 0; border-radius: 6px; background: var(--field); padding: 0 6px; outline: 0; }
+  select:focus, input:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
+  input { width: 58px; text-align: center; font-variant-numeric: tabular-nums; -webkit-user-select: text; user-select: text; }
+  button { height: 24px; width: 26px; display: grid; place-items: center; padding: 0; }
+  .x { color: var(--text-3); }
+  .sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+  #by { color: var(--text-2); white-space: nowrap; }
+  .hidden { display: none !important; }
+  /* A dimension that follows the free space: shown, but quiet. */
+  input.auto { color: var(--text-3); }
+  /* Tailwind breakpoints: set the width, the height keeps filling. */
+  .bps { display: flex; gap: 2px; }
+  .bps button { width: auto; padding: 0 7px; font-size: 11.5px; color: var(--text-2); }
+  .bps button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  @media (max-width: 760px) { .bps, .bps-sep { display: none; } }
+</style>
+<select id="preset" title="Device"></select>
+<span class="sep"></span>
+<span id="bps" class="bps"></span>
+<span class="sep bps-sep"></span>
+<input id="w" title="Width" inputmode="numeric"><span class="x">×</span><input id="h" title="Height" inputmode="numeric">
+<button id="rotate" title="Rotate"><span data-icon="rotate-cw-square"></span></button>
+<span class="sep"></span>
+<select id="dpr" title="Device pixel ratio"></select>
+<select id="zoom" title="Zoom"></select>
+<span id="by" class="hidden">· set by the agent</span>
+<span class="sep"></span>
+<button id="close" title="Leave responsive mode (⇧⌘M)"><span data-icon="x"></span></button>
+<script src="icons.js"></script>
+<script src="responsive.js"></script>

@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<link rel="stylesheet" href="style.css">
+<style>
+  body { display: grid; place-items: center; background: var(--page); }
+  .box { max-width: 460px; text-align: center; padding: 30px; }
+  /* Behind a page with its own size (responsive mode, agent resize): a plain backdrop. */
+  body.framed { background: var(--bar); }
+  body.framed .box { visibility: hidden; }
+  /* Resize handles next to an emulated page (responsive mode). */
+  .handle { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, var(--text) 22%, transparent); }
+  .handle:hover, .handle.drag { background: var(--accent); }
+  body.resizable .handle { display: block; }
+  #hRight { width: 6px; height: 44px; cursor: ew-resize; }
+  #hBottom { width: 44px; height: 6px; cursor: ns-resize; }
+  #hCorner { width: 12px; height: 12px; cursor: nwse-resize; background: none; }
+  #hCorner::before, #hCorner::after { content: ''; position: absolute; right: 0; bottom: 0; border-radius: 2px; background: color-mix(in srgb, var(--text) 22%, transparent); }
+  #hCorner::before { width: 12px; height: 4px; } #hCorner::after { width: 4px; height: 12px; }
+  #hCorner:hover::before, #hCorner:hover::after, #hCorner.drag::before, #hCorner.drag::after { background: var(--accent); }
+  h1 { font-size: 20px; font-weight: 600; margin: 14px 0 8px; }
+  p { color: var(--text-2); margin: 0 0 16px; }
+  .meta { font-size: 12px; color: var(--text-3); text-align: left; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin-top: 18px; -webkit-user-select: text; user-select: text; }
+  .meta span:nth-child(odd) { color: var(--text-2); }
+  button.primary { background: var(--accent); color: white; padding: 7px 16px; font-weight: 500; }
+  button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  .logo { width: 96px; height: 96px; display: block; margin: 0 auto; }
+</style>
+<div class="box">
+  <img class="logo" src="icon.png" alt="">
+  <h1 id="h"></h1>
+  <p id="p"></p>
+  <button id="b" class="primary"></button>
+  <div id="meta" class="meta"></div>
+</div>
+<div id="hRight" class="handle" title="Drag to set the width · double-click to fill"></div>
+<div id="hBottom" class="handle" title="Drag to set the height · double-click to fill"></div>
+<div id="hCorner" class="handle" title="Drag to set the size · double-click to fill"></div>
+<script src="empty.js"></script>
