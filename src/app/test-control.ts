@@ -4,7 +4,7 @@ import type { BaseWindow, WebContentsView } from 'electron';
 import type { SessionManager } from './sessions';
 import { uiState } from './ui-state';
 
-export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: string, tab?: number) => void; layout: () => void; upstreamUrl: () => string; action: (name: string, ...args: any[]) => Promise<unknown>; quit: () => void; clipboard: () => string; background: () => WebContentsView; errors: () => string[]; annotating: () => boolean; view: (name: string) => WebContentsView | undefined }): void {
+export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: string, tab?: number) => void; layout: () => void; publish: () => void; upstreamUrl: () => string; action: (name: string, ...args: any[]) => Promise<unknown>; quit: () => void; clipboard: () => string; background: () => WebContentsView; errors: () => string[]; annotating: () => boolean; view: (name: string) => WebContentsView | undefined }): void {
   const out = (o: object) => process.stdout.write(JSON.stringify({ ...o, at: Date.now() }) + '\n');
   out({ ready: true, chrome: process.versions.chrome, upstream: ui.upstreamUrl() });
   // The window must never take focus on its own (agents work in the background).
@@ -18,6 +18,8 @@ export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: st
       // The native window id (macOS: CGWindowID), e.g. for `screencapture -l` without focusing the window.
       else if (cmd === 'windowid') out({ windowId: ui.win.getMediaSourceId() });
       else if (cmd === 'select' && s) ui.select(s.id, arg ? Number(arg) : undefined);
+      // No session selected: the start page, with the sessions in the sidebar (screenshots).
+      else if (cmd === 'deselect') { m.selected = undefined; ui.layout(); ui.publish(); }
       else if (cmd === 'devtools' && s) m.toggleDevtools(s);
       else if (cmd === 'hold' && s) m.setHold(s, arg === 'on');
       else if (cmd === 'pin' && s) s.pinned = arg !== 'off';

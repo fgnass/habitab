@@ -26,7 +26,7 @@ readline.createInterface({ input: app.stdout }).on('line', l => { try { events.p
 while (!events.some(e => e.ready)) await sleep(100);
 const control = line => app.stdin.write(line + '\n');
 
-// Demo projects that look real (see demo-site.mjs): a coffee shop, its admin, API docs.
+// Demo projects that look real (see demo-site.mjs): a juice shop and API docs.
 const page = http.createServer(demoSite);
 await new Promise(r => page.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${page.address().port}`;
@@ -41,17 +41,16 @@ const mk = async (name, clientName, url, meta) => {
 // A short, realistic run per agent, so the sidebar and the timeline show real work.
 // Real agents think between tool calls; the pauses also give each step its own screenshot.
 const think = () => sleep(900);
-const a = await mk('ember-oak-shop', 'claude-code', `${base}/shop`, undefined);
+const a = await mk('juice-shop', 'claude-code', `${base}/shop`, undefined);
 for (const [tool, args] of [
   ['evaluate_script', { pageId: 1, function: '() => { window.scrollTo({ top: 520 }); return scrollY; }' }],
-  ['new_page', { url: `${base}/shop/coffee/ethiopia-guji` }],
+  ['new_page', { url: `${base}/shop/juice/blood-orange` }],
   ['take_snapshot', { pageId: 2 }],
   ['new_page', { url: `${base}/shop/cart` }],
   ['new_page', { url: `${base}/shop/checkout` }],
   ['list_console_messages', { pageId: 4 }],
 ]) { await think(); await a.tool(tool, args); }
 const b = await mk('relay-docs', 'codex-mcp-client', `${base}/docs/messages/send`, { threadId: '019e1c2a-77aa-7c10-b0f3-1d2e3f4a5b6c' });
-const c = await mk('ember-oak-shop', 'codex-mcp-client', `${base}/admin`, { threadId: '019e1c2b-1234-7c10-b0f3-aaaaaaaaaaaa' });
 await sleep(800);
 const st = await new Promise(r => { const n = events.length; control('state'); const t = setInterval(() => { const e = events.slice(n).find(x => x.state); if (e) { clearInterval(t); r(e.state); } }, 50); });
 const first = st.sessions.find(s => s.client === 'claude');
@@ -64,7 +63,7 @@ const stopped = new Promise(r => { app.on('exit', r); process.on('SIGINT', r); p
 const seconds = +(process.argv[2] ?? 0);
 if (seconds) setTimeout(() => { running = false; }, seconds * 1000);
 while (running) await Promise.race([sleep(1000), stopped]);
-await Promise.race([Promise.all([a, b, c].map(x => x.close().catch(() => {}))), sleep(4000)]);
+await Promise.race([Promise.all([a, b].map(x => x.close().catch(() => {}))), sleep(4000)]);
 if (app.exitCode === null) { app.kill(); await new Promise(r => app.once('exit', r)); }
 page.close();
 fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

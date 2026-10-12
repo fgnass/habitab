@@ -14,14 +14,28 @@ api.onState(state => {
   const meta = $('meta');
   meta.replaceChildren();
   $('b').style.display = 'none';
+  const withTabs = state.sessions.filter(x => x.tabs.length);
+  document.body.classList.toggle('sessions', !s && withTabs.length > 0);
   if (!s) {
     $('h').textContent = 'Habitab';
-    $('p').textContent = 'The browsers of your agent sessions show up here. First, take over the Chrome DevTools MCP entries of Claude Code and Codex.';
-    $('b').textContent = 'Open Setup';
     $('b').style.display = '';
     $('b').onclick = () => api.action('setup');
+    if (!withTabs.length) {
+      $('p').textContent = 'The browsers of your agent sessions show up here. First, take over the Chrome DevTools MCP entries of Claude Code and Codex.';
+      $('b').textContent = 'Open Setup';
+      $('b').className = 'primary';
+      return;
+    }
+    // Sessions are there: a summary and the shortcuts; the setup as a quiet link.
+    const tabs = withTabs.reduce((n, x) => n + x.tabs.length, 0);
+    const problems = withTabs.reduce((n, x) => n + x.tabs.reduce((m, t) => m + (t.problems?.total ?? 0), 0), 0);
+    const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    $('p').textContent = `${count(withTabs.length, 'session')} · ${count(tabs, 'tab')}${problems ? ` · ${count(problems, 'problem')}` : ''}. Pick a tab on the left.`;
+    $('b').textContent = 'Setup…';
+    $('b').className = 'quiet';
     return;
   }
+  $('b').className = 'primary';
   const ended = s.phase === 'ended' || s.phase === 'kept';
   $('h').textContent = s.title;
   $('p').textContent = ended

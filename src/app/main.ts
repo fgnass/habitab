@@ -732,7 +732,7 @@ app.whenReady().then(async () => {
     const args = app.isPackaged ? [] : [app.getAppPath()];
     fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args }), { mode: 0o600 });
   } catch (e: any) { log(`launcher install failed: ${e.message}`); }
-  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, view: name => ({ sidebar, topbar, timeline, problems, annotator, status } as Record<string, WebContentsView>)[name] });
+  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, view: name => ({ sidebar, topbar, timeline, problems, annotator, status } as Record<string, WebContentsView>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
 });
 

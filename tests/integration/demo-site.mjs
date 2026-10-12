@@ -1,8 +1,7 @@
 // Demo websites for the preview (showcase.mjs) and promotional screenshots:
-// a coffee shop with its admin dashboard, and the docs of an API. Everything is
-// inline (no network), and the pages look like real projects, not placeholders.
-//   /shop/…   Ember & Oak storefront: home, product, cart, checkout (with problems)
-//   /admin    Ember & Oak admin dashboard
+// a juice shop and the docs of an API. Everything is inline (no network), and
+// the pages look like real projects, not placeholders.
+//   /shop/…   Juice Shop storefront: home, product, cart, checkout (with problems)
 //   /docs/…   Relay API docs
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -10,306 +9,186 @@ const page = (title, css, body, script = '') => `<!doctype html><html lang="en">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${css}</style></head>
 <body>${body}${script}</body></html>`;
 
-// MARK: Ember & Oak (shop)
+// MARK: Juice Shop
 
-const COFFEES = [
-  { id: 'ethiopia-guji', region: 'ETHIOPIA', desc: 'A bright, floral cup from smallholders around Hambela.', name: 'Ethiopia Guji', origin: 'Ethiopia', short: 'GUJI', notes: ['Peach', 'Jasmine', 'Bergamot'], roast: 1, price: 16.5, bag: '#2f5d50', label: '#f3e9d8', ink: '#2f5d50', process: 'Washed', altitude: '1,950–2,200 m', varietal: 'Heirloom' },
-  { id: 'colombia-huila', region: 'COLOMBIA', desc: 'Grown by the Ortiz family on steep slopes above Pitalito.', name: 'Colombia Huila', origin: 'Colombia', short: 'HUILA', notes: ['Red apple', 'Caramel', 'Cocoa'], roast: 2, price: 14.0, bag: '#b4532a', label: '#fbefe3', ink: '#8c3d1d', process: 'Washed', altitude: '1,700 m', varietal: 'Caturra, Castillo' },
-  { id: 'kenya-nyeri', region: 'KENYA', desc: 'Juicy and bold, from the Gatomboya cooperative in Nyeri.', name: 'Kenya Nyeri AA', origin: 'Kenya', short: 'NYERI', notes: ['Blackcurrant', 'Grapefruit', 'Molasses'], roast: 1, price: 18.0, bag: '#6b3a5b', label: '#f6e7ef', ink: '#6b3a5b', process: 'Washed', altitude: '1,800 m', varietal: 'SL28, SL34' },
-  { id: 'house-espresso', region: 'BLEND', desc: 'Our everyday espresso: dense, sweet and forgiving.', name: 'Hearth Espresso', origin: 'Brazil · Guatemala', short: 'HEARTH', notes: ['Dark chocolate', 'Hazelnut', 'Brown sugar'], roast: 3, price: 13.5, bag: '#1f1a17', label: '#e9d8b4', ink: '#1f1a17', process: 'Natural & washed', altitude: '1,100–1,600 m', varietal: 'Blend' },
-  { id: 'guatemala-antigua', region: 'GUATEMALA', desc: 'Classic and balanced, from volcanic soil near Antigua.', name: 'Guatemala Antigua', origin: 'Guatemala', short: 'ANTIGUA', notes: ['Toffee', 'Orange zest', 'Almond'], roast: 2, price: 15.0, bag: '#c99a3b', label: '#fff8e6', ink: '#7a5a17', process: 'Washed', altitude: '1,500 m', varietal: 'Bourbon' },
-  { id: 'decaf-peru', region: 'PERU', desc: 'All the sweetness, none of the caffeine, from Cajamarca.', name: 'Peru Decaf', origin: 'Peru', short: 'DECAF', notes: ['Milk chocolate', 'Plum', 'Honey'], roast: 2, price: 14.5, bag: '#5b6b3a', label: '#f1f3e4', ink: '#45522a', process: 'Swiss Water', altitude: '1,600 m', varietal: 'Typica, Bourbon' },
+const JUICES = [
+  { id: 'blood-orange', name: 'Blood Orange', tag: 'Cold-pressed', desc: 'Sicilian blood oranges, pressed the morning we deliver.', price: 4.9, juice: '#d7301f', bg: '#fde8e4', fruit: 'orange' },
+  { id: 'orange', name: 'Orange', tag: 'Cold-pressed', desc: 'The classic. Valencia oranges, nothing else.', price: 3.9, juice: '#f28c28', bg: '#fdeedc', fruit: 'orange' },
+  { id: 'carrot-ginger', name: 'Carrot & Ginger', tag: 'Cold-pressed', desc: 'Sweet carrots with a kick of fresh ginger.', price: 4.5, juice: '#e8762b', bg: '#fdebdd', fruit: 'carrot' },
+  { id: 'mango-passion', name: 'Mango & Passion Fruit', tag: 'Smoothie', desc: 'Thick, sweet and sour. Alphonso mango, passion fruit, a squeeze of lime.', price: 5.2, juice: '#f5b82e', bg: '#fdf3d8', fruit: 'mango' },
+  { id: 'apple-celery', name: 'Apple & Celery', tag: 'Cold-pressed', desc: 'Green apples, celery, cucumber and lemon.', price: 4.5, juice: '#8dbe3c', bg: '#eef5de', fruit: 'apple' },
+  { id: 'pink-grapefruit', name: 'Pink Grapefruit', tag: 'Cold-pressed', desc: 'Bitter, sweet, very pink.', price: 4.9, juice: '#ef6a8a', bg: '#fde6ec', fruit: 'grapefruit' },
+  { id: 'beetroot-apple', name: 'Beetroot & Apple', tag: 'Cold-pressed', desc: 'Earthy beetroot, sweetened with apple.', price: 4.5, juice: '#9b1b4b', bg: '#f6e2ea', fruit: 'beet' },
+  { id: 'ginger-shot', name: 'Ginger Shot', tag: 'Shot · 60 ml', desc: 'Ginger, lemon, turmeric, black pepper. Not for the faint of heart.', price: 2.9, juice: '#f2c94c', bg: '#fdf5d9', fruit: 'lemon' },
 ];
 
-/** A coffee bag (SVG): kraft-style pouch in the product's color with a label. */
-function bag(c, size = 180) {
-  const id = c.id;
-  return `<svg viewBox="0 0 200 250" width="${size}" height="${size * 1.25}" aria-hidden="true">
-    <defs><linearGradient id="g-${id}" x1="0" x2="1"><stop offset="0" stop-color="#000" stop-opacity=".18"/><stop offset=".25" stop-color="#fff" stop-opacity=".08"/>
-      <stop offset=".6" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient></defs>
-    <ellipse cx="100" cy="240" rx="78" ry="7" fill="#000" opacity=".12"/>
-    <path d="M38 34 L162 34 L172 232 Q100 242 28 232 Z" fill="${c.bag}"/>
-    <path d="M38 34 L162 34 L172 232 Q100 242 28 232 Z" fill="url(#g-${id})"/>
-    <rect x="36" y="18" width="128" height="22" rx="3" fill="${c.bag}"/><rect x="36" y="18" width="128" height="22" rx="3" fill="#000" opacity=".18"/>
-    <path d="M44 29 H156" stroke="#fff" stroke-opacity=".25" stroke-width="2" stroke-dasharray="4 4"/>
-    <rect x="56" y="88" width="88" height="104" rx="6" fill="${c.label}"/>
-    <circle cx="100" cy="112" r="11" fill="none" stroke="${c.ink}" stroke-width="2"/>
-    <path d="M100 103 C95 108 95 116 100 121 C105 116 105 108 100 103 Z" fill="${c.ink}"/>
-    <text x="100" y="72" text-anchor="middle" font-family="Georgia, serif" font-size="9" font-weight="700" letter-spacing="2.4" fill="#fff" opacity=".8">EMBER &amp; OAK</text>
-    <text x="100" y="146" text-anchor="middle" font-family="Georgia, serif" font-size="${[15, 15, 15, 15, 15, 13.5, 11.5, 10][Math.min(c.short.length, 7)]}" font-weight="700" letter-spacing="1.2" fill="${c.ink}">${esc(c.short)}</text>
-    <text x="100" y="162" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="7" letter-spacing="1.6" fill="${c.ink}" opacity=".75">${esc(c.region)}</text>
-    <path d="M80 172 H120" stroke="${c.ink}" stroke-opacity=".35"/>
-    <text x="100" y="184" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="7" letter-spacing="1.4" fill="${c.ink}" opacity=".7">250 G</text>
+/** A juice bottle (SVG): flat, in the juice's color, with a white label. */
+function bottle(j, size = 180) {
+  const label = j.name.length > 14 ? j.name.split(' & ') : [j.name];
+  return `<svg viewBox="0 0 120 200" width="${size * 0.6}" height="${size}" aria-hidden="true">
+    <rect x="44" y="6" width="32" height="18" rx="3" fill="#2b2b2b"/>
+    <path d="M40 24 H80 V40 Q92 50 92 70 V178 Q92 194 76 194 H44 Q28 194 28 178 V70 Q28 50 40 40 Z" fill="${j.juice}"/>
+    <path d="M40 24 H80 V40 Q92 50 92 70 V178 Q92 194 76 194 H44 Q28 194 28 178 V70 Q28 50 40 40 Z" fill="#fff" opacity=".12"/>
+    <rect x="34" y="52" width="6" height="110" rx="3" fill="#fff" opacity=".35"/>
+    <rect x="28" y="88" width="64" height="58" fill="#fff"/>
+    ${label.map((t, i) => `<text x="60" y="${label.length === 1 ? 118 : 110 + i * 18}" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="${t.length > 9 ? 9 : 11}" font-weight="700" fill="#1a1a1a">${esc(t)}</text>`).join('')}
+    <text x="60" y="${label.length === 1 ? 134 : 140}" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="6.5" letter-spacing="1.2" fill="#777">JUICE SHOP</text>
   </svg>`;
 }
 
-const roastDots = n => `<span class="roast" title="Roast level">${[1, 2, 3].map(i => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}<em>${['Light', 'Medium', 'Dark'][n - 1]}</em></span>`;
 const euro = n => `€${n.toFixed(2)}`;
 
 const SHOP_CSS = `
-  :root { --bg: #faf6f0; --ink: #2a211b; --muted: #7b6d62; --line: #eadfd2; --accent: #b4532a; --card: #fff; }
-  * { box-sizing: border-box; } body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  :root { --ink: #1a1a1a; --muted: #6b6b6b; --line: #e6e6e6; --orange: #f28c28; --orange-dark: #d9731a; }
+  * { box-sizing: border-box; } body { margin: 0; background: #fff; color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
   a { color: inherit; text-decoration: none; }
-  .serif { font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; }
-  .bar { background: #2a211b; color: #f3e9d8; text-align: center; font-size: 12.5px; padding: 7px; letter-spacing: .3px; }
-  nav { display: flex; align-items: center; gap: 32px; padding: 18px 48px; border-bottom: 1px solid var(--line); background: var(--bg); }
-  .logo { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 700; letter-spacing: -.2px; }
-  .logo svg { width: 28px; height: 28px; }
-  nav .links { display: flex; gap: 26px; font-size: 14.5px; color: var(--muted); } nav .links a.on { color: var(--ink); font-weight: 600; }
-  nav .right { margin-left: auto; display: flex; gap: 18px; align-items: center; font-size: 14px; color: var(--muted); }
-  .cart-btn { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; background: var(--ink); color: #fff; font-weight: 600; }
-  .cart-btn b { background: var(--accent); border-radius: 999px; padding: 0 7px; font-size: 12px; }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 48px; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 999px; padding: 12px 22px; font: 600 14.5px/1 inherit; cursor: pointer; }
-  .btn.primary { background: var(--accent); color: #fff; } .btn.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
-  .hero { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; align-items: center; padding: 56px 0 40px; }
-  .eyebrow { text-transform: uppercase; letter-spacing: 2px; font-size: 12px; color: var(--accent); font-weight: 700; }
-  .hero h1 { font-size: 54px; line-height: 1.05; margin: 14px 0 16px; letter-spacing: -1px; }
-  .hero p { font-size: 17px; color: var(--muted); max-width: 470px; margin: 0 0 26px; }
-  .hero .bags { position: relative; height: 330px; background: radial-gradient(closest-side, #f0e2cf, transparent); }
-  .hero .bags svg { position: absolute; bottom: 0; }
-  .perks { display: flex; gap: 28px; margin-top: 30px; color: var(--muted); font-size: 13.5px; } .perks b { color: var(--ink); display: block; font-size: 15px; }
-  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 26px 0 18px; }
-  .section-head h2 { font-size: 30px; margin: 0; }
-  .filters { display: flex; gap: 8px; } .chip { padding: 6px 13px; border-radius: 999px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; color: var(--muted); }
-  .chip.on { background: var(--ink); color: #fff; box-shadow: none; }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; padding-bottom: 60px; }
-  .product { background: var(--card); border-radius: 18px; overflow: hidden; box-shadow: 0 1px 0 var(--line), 0 10px 30px -18px rgba(60,40,20,.35); }
-  .product .img { height: 230px; display: grid; place-items: center; }
-  .product .body { padding: 18px 20px 20px; }
-  .product h3 { margin: 0; font-size: 20px; } .product .origin { color: var(--muted); font-size: 13px; margin: 2px 0 10px; }
-  .notes { display: flex; gap: 6px; flex-wrap: wrap; } .notes span { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #f6efe6; color: #6a5547; }
-  .row { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
-  .price { font-size: 19px; font-weight: 700; } .price small { color: var(--muted); font-weight: 400; font-size: 13px; }
-  .add { border: 0; border-radius: 999px; padding: 9px 15px; background: var(--ink); color: #fff; font: 600 13px/1 inherit; }
-  .roast { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); } .roast i { width: 9px; height: 9px; border-radius: 50%; background: #e8dccd; }
-  .roast i.on { background: #6b4226; } .roast em { font-style: normal; margin-left: 5px; }
+  .promo { background: var(--ink); color: #fff; text-align: center; font-size: 13px; padding: 7px; }
+  header { background: linear-gradient(100deg, #ffd9a8 0%, #ffb866 55%, #ff9f52 100%); color: var(--ink); }
+  nav { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; gap: 36px; padding: 0 32px; height: 68px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 800; letter-spacing: -.5px; }
+  .logo svg { width: 30px; height: 30px; }
+  nav .links { display: flex; gap: 24px; font-size: 15px; font-weight: 500; } nav .links a.on { text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 2px; }
+  nav .right { margin-left: auto; display: flex; gap: 20px; align-items: center; font-size: 14px; font-weight: 500; }
+  .cart-btn { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: var(--ink); color: #fff; font-weight: 600; border-radius: 4px; }
+  .cart-btn b { background: #fff; color: var(--ink); border-radius: 999px; padding: 0 7px; font-size: 12px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 4px; padding: 13px 22px; font: 600 15px/1 inherit; cursor: pointer; }
+  .btn.primary { background: var(--orange); color: var(--ink); } .btn.dark { background: var(--ink); color: #fff; } .btn.ghost { background: #fff; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+  .hero { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; margin: 28px 0 44px; background: #fdeedc; border-radius: 8px; padding: 40px 48px; }
+  .hero h1 { font-size: 48px; line-height: 1.05; margin: 0 0 14px; letter-spacing: -1px; font-weight: 800; }
+  .hero p { font-size: 17px; color: #4a4a4a; max-width: 440px; margin: 0 0 24px; }
+  .hero .bottles { display: flex; justify-content: center; align-items: flex-end; gap: 18px; }
+  .usp { display: flex; gap: 32px; margin: 0 0 32px; font-size: 14px; color: var(--muted); } .usp b { color: var(--ink); }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 18px; }
+  .section-head h2 { font-size: 26px; margin: 0; font-weight: 800; letter-spacing: -.4px; }
+  .filters { display: flex; gap: 6px; } .chip { padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; color: var(--muted); }
+  .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; padding-bottom: 56px; }
+  .product { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+  .product .img { height: 220px; display: grid; place-items: center; }
+  .product .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .product h3 { margin: 0; font-size: 17px; } .product .tag { color: var(--muted); font-size: 13px; }
+  .row { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; }
+  .price { font-size: 17px; font-weight: 700; } .price small { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .add { border: 0; border-radius: 4px; padding: 9px 14px; background: var(--orange); color: var(--ink); font: 600 13px/1 inherit; }
   .crumbs { font-size: 13px; color: var(--muted); padding: 22px 0 0; } .crumbs a { text-decoration: underline; text-underline-offset: 3px; }
-  .pdp { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; padding: 26px 0 60px; }
-  .pdp .stage { border-radius: 24px; display: grid; place-items: center; height: 560px; }
-  .pdp h1 { font-size: 46px; margin: 6px 0 6px; letter-spacing: -.6px; } .pdp .lead { color: var(--muted); font-size: 16.5px; margin: 14px 0 22px; }
-  .opt { margin: 20px 0 0; } .opt label { font-size: 12.5px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); font-weight: 700; display: block; margin-bottom: 8px; }
-  .seg { display: flex; gap: 8px; } .seg span { padding: 10px 16px; border-radius: 12px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); font-size: 14px; }
-  .seg span.on { box-shadow: inset 0 0 0 2px var(--ink); font-weight: 600; }
-  .buy { display: flex; gap: 12px; margin-top: 28px; align-items: center; }
-  .qty { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 999px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; }
-  .facts { margin-top: 30px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); }
+  .pdp { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; padding: 24px 0 60px; }
+  .pdp .stage { border-radius: 8px; display: grid; place-items: center; height: 520px; }
+  .pdp h1 { font-size: 40px; margin: 6px 0 8px; letter-spacing: -.6px; font-weight: 800; } .pdp .lead { color: #4a4a4a; font-size: 16.5px; margin: 10px 0 22px; }
+  .pdp .tag { color: var(--muted); font-size: 14px; }
+  .opt { margin: 18px 0 0; } .opt label { font-size: 13px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 8px; }
+  .seg { display: flex; gap: 8px; } .seg span { padding: 10px 16px; border: 1px solid var(--line); border-radius: 4px; font-size: 14px; }
+  .seg span.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); font-weight: 600; }
+  .buy { display: flex; gap: 12px; margin-top: 26px; align-items: center; }
+  .qty { display: flex; align-items: center; gap: 14px; padding: 11px 16px; border: 1px solid var(--line); border-radius: 4px; font-weight: 600; }
+  .facts { margin-top: 28px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); }
   .facts div { padding: 14px 0; font-size: 13px; color: var(--muted); } .facts b { display: block; color: var(--ink); font-size: 15px; }
-  .two { display: grid; grid-template-columns: 1.5fr 1fr; gap: 40px; padding: 30px 0 60px; align-items: start; }
-  .panel { background: #fff; border-radius: 18px; padding: 24px; box-shadow: 0 1px 0 var(--line), 0 10px 30px -20px rgba(60,40,20,.35); }
-  .panel h2 { margin: 0 0 16px; font-size: 22px; }
+  .two { display: grid; grid-template-columns: 1.5fr 1fr; gap: 32px; padding: 28px 0 60px; align-items: start; }
+  .panel { border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
+  .panel h2 { margin: 0 0 16px; font-size: 22px; font-weight: 800; letter-spacing: -.3px; }
   .line { display: grid; grid-template-columns: 76px 1fr auto auto; gap: 18px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
   .line.compact { grid-template-columns: 64px 1fr auto; gap: 14px; } .line.compact .thumb { width: 64px; height: 64px; }
-  .line:first-of-type { border-top: 0; } .line .thumb { width: 76px; height: 76px; border-radius: 14px; display: grid; place-items: center; overflow: hidden; }
+  .line:first-of-type { border-top: 0; } .line .thumb { width: 76px; height: 76px; border-radius: 6px; display: grid; place-items: center; overflow: hidden; }
   .line h4 { margin: 0; font-size: 16px; } .line p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
   .sum { display: flex; justify-content: space-between; padding: 7px 0; font-size: 14.5px; color: var(--muted); } .sum b { color: var(--ink); }
   .sum.total { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 14px; font-size: 18px; color: var(--ink); font-weight: 700; }
-  .field { display: grid; gap: 6px; margin-bottom: 14px; } .field span { font-size: 12.5px; color: var(--muted); font-weight: 600; }
-  .field input { font: inherit; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: #fffdfa; }
+  .field { display: grid; gap: 6px; margin-bottom: 14px; } .field span { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .field input { font: inherit; padding: 12px 14px; border-radius: 4px; border: 1px solid #cfcfcf; background: #fff; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } .cols3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 14px; }
-  .ship { display: grid; gap: 10px; } .ship div { display: flex; justify-content: space-between; padding: 14px 16px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line); font-size: 14px; }
-  .ship div.on { box-shadow: inset 0 0 0 2px var(--accent); background: #fff8f3; }
+  .ship { display: grid; gap: 10px; } .ship div { display: flex; justify-content: space-between; padding: 14px 16px; border-radius: 4px; border: 1px solid var(--line); font-size: 14px; }
+  .ship div.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
   .steps { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); margin: 26px 0 0; } .steps b { color: var(--ink); }
-  footer { border-top: 1px solid var(--line); padding: 26px 48px; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; }
+  footer { border-top: 1px solid var(--line); margin-top: 20px; padding: 26px 32px; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; max-width: 1180px; margin-left: auto; margin-right: auto; }
 `;
 
-const LOGO = `<svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#2a211b"/><path d="M16 6 C10 12 10 20 16 26 C22 20 22 12 16 6 Z" fill="#e0a56a"/><path d="M16 9 V23" stroke="#2a211b" stroke-width="1.6"/></svg>`;
+const LOGO = `<svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#1a1a1a"/><circle cx="16" cy="16" r="11" fill="#f28c28"/><path d="M16 5 V27 M5 16 H27 M8.2 8.2 L23.8 23.8 M23.8 8.2 L8.2 23.8" stroke="#1a1a1a" stroke-width="1.5"/><circle cx="16" cy="16" r="2.4" fill="#1a1a1a"/></svg>`;
 
 function shopChrome(active, body) {
-  const links = [['Shop', '/shop'], ['Subscriptions', '#'], ['Brew guides', '#'], ['Wholesale', '#'], ['Our story', '#']];
-  return `<div class="bar">Free shipping over €40 · Roasted every Tuesday in Leipzig</div>
-  <nav><a class="logo serif" href="/shop">${LOGO}Ember &amp; Oak</a>
+  const links = [['Juices', '/shop'], ['Shots', '#'], ['Bundles', '#'], ['Subscriptions', '#'], ['About', '#']];
+  return `<div class="promo">Free delivery in Hamburg from €20 · Pressed every morning</div>
+  <header><nav><a class="logo" href="/shop">${LOGO}Juice Shop</a>
     <div class="links">${links.map(([t, h]) => `<a href="${h}" class="${t === active ? 'on' : ''}">${t}</a>`).join('')}</div>
-    <div class="right"><span>Search</span><span>Account</span><a class="cart-btn" href="/shop/cart">Cart <b>3</b></a></div></nav>
+    <div class="right"><span>Search</span><span>Account</span><a class="cart-btn" href="/shop/cart">Cart <b>3</b></a></div></nav></header>
   ${body}
-  <footer><span>© 2026 Ember &amp; Oak Coffee Roasters</span><span>Shipping · Returns · Contact · Imprint</span></footer>`;
+  <footer><span>© 2026 Juice Shop GmbH, Hamburg</span><span>Delivery · Returns · Contact · Imprint</span></footer>`;
 }
 
-const tint = c => `background: color-mix(in srgb, ${c.bag} 13%, #fbf7f1)`;
+const tint = j => `background: ${j.bg}`;
 
 function shopHome() {
-  const [a, b, c] = [COFFEES[1], COFFEES[0], COFFEES[3]];
-  return page('Ember & Oak — Small-batch coffee roasters', SHOP_CSS, shopChrome('Shop', `<div class="wrap">
+  const [a, b, c] = [JUICES[2], JUICES[0], JUICES[4]];
+  return page('Juice Shop — Fresh juice, delivered', SHOP_CSS, shopChrome('Juices', `<div class="wrap">
     <section class="hero"><div>
-      <div class="eyebrow">New harvest · Ethiopia Guji</div>
-      <h1 class="serif">Small-batch coffee, roasted every Tuesday.</h1>
-      <p>Single origins and blends from farms we know by name. Roasted to order in Leipzig and shipped within 48 hours.</p>
-      <a class="btn primary" href="/shop/coffee/ethiopia-guji">Shop the new harvest →</a> &nbsp; <a class="btn ghost" href="#">Start a subscription</a>
-      <div class="perks"><div><b>4.9 ★</b>2,340 reviews</div><div><b>48 h</b>roast to door</div><div><b>Direct trade</b>12 partner farms</div></div>
+      <h1>Fresh juice. Pressed today, at your door tomorrow.</h1>
+      <p>Cold-pressed from whole fruit and vegetables, no sugar, no concentrate. Order by 6 pm for next-morning delivery.</p>
+      <a class="btn dark" href="/shop/juice/blood-orange">Shop juices</a> &nbsp; <a class="btn ghost" href="#">Build a bundle</a>
     </div>
-    <div class="bags"><div style="position:absolute;left:4%;bottom:0;transform:rotate(-7deg)">${bag(a, 190)}</div>
-      <div style="position:absolute;left:31%;bottom:10px;z-index:2">${bag(b, 230)}</div>
-      <div style="position:absolute;right:2%;bottom:0;transform:rotate(6deg)">${bag(c, 190)}</div></div>
+    <div class="bottles">${bottle(a, 200)}${bottle(b, 250)}${bottle(c, 200)}</div>
     </section>
-    <div class="section-head"><h2 class="serif">This week’s roasts</h2>
-      <div class="filters"><span class="chip on">All</span><span class="chip">Filter</span><span class="chip">Espresso</span><span class="chip">Decaf</span></div></div>
-    <div class="grid">${COFFEES.map(c => `<a class="product" href="/shop/coffee/${c.id}">
-      <div class="img" style="${tint(c)}">${bag(c, 140)}</div>
-      <div class="body"><h3 class="serif">${esc(c.name)}</h3><div class="origin">${esc(c.origin)} · ${esc(c.process)}</div>
-        <div class="notes">${c.notes.map(n => `<span>${esc(n)}</span>`).join('')}</div>
-        <div class="row"><div><div class="price">${euro(c.price)} <small>/ 250 g</small></div>${roastDots(c.roast)}</div><button class="add">Add to cart</button></div></div></a>`).join('')}
+    <div class="usp"><span><b>Next-morning delivery</b> in Hamburg</span><span><b>Bottle deposit</b> €0.25, returned on pickup</span><span><b>Best before</b> 4 days, unpasteurised</span></div>
+    <div class="section-head"><h2>All juices</h2>
+      <div class="filters"><span class="chip on">All</span><span class="chip">Cold-pressed</span><span class="chip">Smoothies</span><span class="chip">Shots</span></div></div>
+    <div class="grid">${JUICES.map(j => `<a class="product" href="/shop/juice/${j.id}">
+      <div class="img" style="${tint(j)}">${bottle(j, 170)}</div>
+      <div class="body"><h3>${esc(j.name)}</h3><div class="tag">${esc(j.tag)}</div>
+        <div class="row"><div class="price">${euro(j.price)} <small>/ ${j.id === 'ginger-shot' ? '60 ml' : '250 ml'}</small></div><button class="add">Add</button></div></div></a>`).join('')}
     </div></div>`));
 }
 
 function shopProduct(id) {
-  const c = COFFEES.find(x => x.id === id) ?? COFFEES[0];
-  return page(`${c.name} — Ember & Oak`, SHOP_CSS, shopChrome('Shop', `<div class="wrap">
-    <div class="crumbs"><a href="/shop">Shop</a> / Single origin / ${esc(c.name)}</div>
-    <section class="pdp"><div class="stage" style="${tint(c)}">${bag(c, 330)}</div>
-    <div><div class="eyebrow">${esc(c.origin)} · ${esc(c.process)}</div>
-      <h1 class="serif">${esc(c.name)}</h1>${roastDots(c.roast)}
-      <p class="lead">${esc(c.desc)} Tastes of ${c.notes.map(n => n.toLowerCase()).join(', ')} — great as pour-over and as espresso.</p>
-      <div class="notes">${c.notes.map(n => `<span>${esc(n)}</span>`).join('')}</div>
-      <div class="opt"><label>Size</label><div class="seg"><span class="on">250 g · ${euro(c.price)}</span><span>500 g · ${euro(c.price * 1.85)}</span><span>1 kg · ${euro(c.price * 3.4)}</span></div></div>
-      <div class="opt"><label>Grind</label><div class="seg"><span class="on">Whole bean</span><span>Filter</span><span>Espresso</span><span>French press</span></div></div>
-      <div class="buy"><span class="qty">−&nbsp; 1 &nbsp;+</span><a class="btn primary" href="/shop/cart">Add to cart · ${euro(c.price)}</a></div>
-      <div class="facts"><div><b>${esc(c.altitude)}</b>Altitude</div><div><b>${esc(c.varietal)}</b>Varietal</div><div><b>Oct 2026</b>Harvest</div></div>
+  const j = JUICES.find(x => x.id === id) ?? JUICES[0];
+  return page(`${j.name} — Juice Shop`, SHOP_CSS, shopChrome('Juices', `<div class="wrap">
+    <div class="crumbs"><a href="/shop">Juices</a> / ${esc(j.name)}</div>
+    <section class="pdp"><div class="stage" style="${tint(j)}">${bottle(j, 400)}</div>
+    <div><div class="tag">${esc(j.tag)}</div>
+      <h1>${esc(j.name)}</h1>
+      <div class="price" style="font-size:22px">${euro(j.price)} <small>/ 250 ml · incl. VAT, plus €0.25 deposit</small></div>
+      <p class="lead">${esc(j.desc)}</p>
+      <div class="opt"><label>Size</label><div class="seg"><span class="on">250 ml · ${euro(j.price)}</span><span>500 ml · ${euro(j.price * 1.8)}</span><span>1 l · ${euro(j.price * 3.2)}</span></div></div>
+      <div class="opt"><label>Delivery</label><div class="seg"><span class="on">Once</span><span>Every week · −10 %</span></div></div>
+      <div class="buy"><span class="qty">−&nbsp; 1 &nbsp;+</span><a class="btn primary" href="/shop/cart">Add to cart · ${euro(j.price)}</a></div>
+      <div class="facts"><div><b>Tomorrow</b>Delivery</div><div><b>4 days</b>Best before</div><div><b>Returnable</b>Glass bottle</div></div>
     </div></section></div>`));
 }
 
-const CART = [{ c: COFFEES[0], qty: 1, size: '250 g · Whole bean' }, { c: COFFEES[3], qty: 2, size: '500 g · Espresso' }];
+const CART = [{ j: JUICES[0], qty: 2, size: '500 ml' }, { j: JUICES[2], qty: 1, size: '250 ml' }];
 /** Cart lines; `compact` (order summary): the quantity as text instead of the stepper. */
-const cartLines = (compact = false) => CART.map(({ c, qty, size }) => `<div class="line${compact ? ' compact' : ''}"><div class="thumb" style="${tint(c)}">${bag(c, 56)}</div>
-  <div><h4>${esc(c.name)}</h4><p>${esc(size)}${compact ? ` · Qty ${qty}` : ''}</p></div>${compact ? '' : `<span class="qty">−&nbsp; ${qty} &nbsp;+</span>`}<b>${euro(c.price * qty * (size.startsWith('500') ? 1.85 : 1))}</b></div>`).join('');
-const subtotal = () => CART.reduce((n, { c, qty, size }) => n + c.price * qty * (size.startsWith('500') ? 1.85 : 1), 0);
+const cartLines = (compact = false) => CART.map(({ j, qty, size }) => `<div class="line${compact ? ' compact' : ''}"><div class="thumb" style="${tint(j)}">${bottle(j, 60)}</div>
+  <div><h4>${esc(j.name)}</h4><p>${esc(size)}${compact ? ` · Qty ${qty}` : ''}</p></div>${compact ? '' : `<span class="qty">−&nbsp; ${qty} &nbsp;+</span>`}<b>${euro(j.price * qty * (size.startsWith('500') ? 1.8 : 1))}</b></div>`).join('');
+const subtotal = () => CART.reduce((n, { j, qty, size }) => n + j.price * qty * (size.startsWith('500') ? 1.8 : 1), 0);
 
 function shopCart() {
   const sub = subtotal();
-  return page('Your cart — Ember & Oak', SHOP_CSS, shopChrome('', `<div class="wrap">
-    <div class="steps"><b>Cart</b> → Shipping → Payment</div>
-    <section class="two"><div class="panel"><h2 class="serif">Your cart</h2>${cartLines()}</div>
-    <div class="panel"><h2 class="serif">Summary</h2>
-      <div class="sum"><span>Subtotal</span><b>${euro(sub)}</b></div><div class="sum"><span>Shipping</span><b>Free</b></div>
-      <div class="sum total"><span>Total</span><span>${euro(sub)}</span></div>
+  return page('Your cart — Juice Shop', SHOP_CSS, shopChrome('', `<div class="wrap">
+    <div class="steps"><b>Cart</b> → Delivery → Payment</div>
+    <section class="two"><div class="panel"><h2>Your cart</h2>${cartLines()}</div>
+    <div class="panel"><h2>Summary</h2>
+      <div class="sum"><span>Subtotal</span><b>${euro(sub)}</b></div><div class="sum"><span>Deposit (3 bottles)</span><b>€0.75</b></div><div class="sum"><span>Delivery</span><b>Free</b></div>
+      <div class="sum total"><span>Total</span><span>${euro(sub + 0.75)}</span></div>
       <a class="btn primary" style="width:100%;justify-content:center;margin-top:18px" href="/shop/checkout">Checkout</a>
-      <p style="color:var(--muted);font-size:13px;margin:14px 0 0">Roasted on Tuesday, ships Wednesday.</p></div></section></div>`));
+      <p style="color:var(--muted);font-size:13px;margin:14px 0 0">Order by 6 pm for delivery tomorrow morning.</p></div></section></div>`));
 }
 
 function shopCheckout() {
   const sub = subtotal();
   // The checkout has bugs on purpose: a failed stock check and a script error (problem list demo).
   const script = `<script>
-    fetch('/api/stock?items=ethiopia-guji,house-espresso').then(r => { if (!r.ok) console.error('Stock check failed:', r.status, r.statusText); });
+    fetch('/api/stock?items=blood-orange,carrot-ginger').then(r => { if (!r.ok) console.error('Stock check failed:', r.status, r.statusText); });
     setTimeout(() => { document.querySelector('#total').textContent = '€' + cart.total.toFixed(2); });
   </script>`;
-  return page('Checkout — Ember & Oak', SHOP_CSS, shopChrome('', `<div class="wrap">
-    <div class="steps">Cart → <b>Shipping</b> → Payment</div>
-    <section class="two"><div class="panel"><h2 class="serif">Shipping</h2>
+  return page('Checkout — Juice Shop', SHOP_CSS, shopChrome('', `<div class="wrap">
+    <div class="steps">Cart → <b>Delivery</b> → Payment</div>
+    <section class="two"><div class="panel"><h2>Delivery address</h2>
       <div class="field"><span>Email</span><input value="mara.lindqvist@example.com"></div>
       <div class="cols"><div class="field"><span>First name</span><input value="Mara"></div><div class="field"><span>Last name</span><input value="Lindqvist"></div></div>
-      <div class="field"><span>Street</span><input value="Karl-Liebknecht-Straße 88"></div>
-      <div class="cols3"><div class="field"><span>City</span><input value="Leipzig"></div><div class="field"><span>ZIP</span><input value="04275"></div><div class="field"><span>Country</span><input value="Germany"></div></div>
-      <h2 class="serif" style="margin-top:10px">Delivery</h2>
-      <div class="ship"><div class="on"><span><b>DHL GoGreen</b> · 2–3 days</span><b>Free</b></div><div><span><b>Express</b> · next day</span><b>€6.90</b></div></div>
+      <div class="field"><span>Street</span><input value="Schanzenstraße 34"></div>
+      <div class="cols3"><div class="field"><span>City</span><input value="Hamburg"></div><div class="field"><span>ZIP</span><input value="20357"></div><div class="field"><span>Country</span><input value="Germany"></div></div>
+      <h2 style="margin-top:10px">Delivery slot</h2>
+      <div class="ship"><div class="on"><span><b>Tomorrow</b> · 6–9 am</span><b>Free</b></div><div><span><b>Tomorrow</b> · 9–12 am</span><b>Free</b></div><div><span><b>Today</b> · by courier within 2 h</span><b>€4.90</b></div></div>
       <a class="btn primary" style="margin-top:22px" href="#">Continue to payment →</a></div>
-    <div class="panel"><h2 class="serif">Order</h2>${cartLines(true)}
-      <div class="sum"><span>Subtotal</span><b>${euro(sub)}</b></div><div class="sum"><span>Shipping</span><b>Free</b></div>
-      <div class="sum total"><span>Total</span><span id="total">${euro(sub)}</span></div></div></section></div>`), script);
-}
-
-// MARK: Ember & Oak admin
-
-const ADMIN_CSS = `
-  :root { --bg: #f4f5f7; --ink: #111827; --muted: #6b7280; --line: #e5e7eb; --accent: #b4532a; --green: #15803d; --red: #b91c1c; }
-  * { box-sizing: border-box; } body { margin: 0; display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
-  aside { background: #17120f; color: #d6cfc8; padding: 20px 14px; display: flex; flex-direction: column; gap: 4px; }
-  aside .logo { display: flex; align-items: center; gap: 10px; color: #fff; font: 700 16px Georgia, serif; padding: 4px 10px 20px; }
-  aside .logo svg { width: 26px; height: 26px; } aside .logo small { font: 600 10px -apple-system, system-ui; letter-spacing: 1px; color: #e0a56a; display: block; }
-  aside a { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: inherit; text-decoration: none; }
-  aside a.on { background: #2b221c; color: #fff; font-weight: 600; } aside a span.n { margin-left: auto; font-size: 11px; background: #b4532a; color: #fff; border-radius: 999px; padding: 0 7px; }
-  aside svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
-  aside .sep { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: #7d7067; padding: 18px 10px 6px; }
-  aside .me { margin-top: auto; display: flex; gap: 10px; align-items: center; padding: 10px; border-top: 1px solid #2b221c; }
-  .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #e0a56a, #b4532a); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12px; }
-  main { padding: 26px 32px; min-width: 0; }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; } header h1 { margin: 0; font-size: 24px; letter-spacing: -.3px; }
-  header .sub { color: var(--muted); } header .tools { margin-left: auto; display: flex; gap: 8px; }
-  .pill { padding: 7px 12px; border-radius: 8px; background: #fff; border: 1px solid var(--line); font-size: 13px; } .pill.dark { background: var(--ink); color: #fff; border-color: var(--ink); }
-  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-  .card { background: #fff; border-radius: 14px; border: 1px solid var(--line); padding: 18px; }
-  .kpi .label { color: var(--muted); font-size: 12.5px; font-weight: 600; } .kpi .value { font-size: 27px; font-weight: 700; letter-spacing: -.5px; margin: 4px 0; }
-  .delta { font-size: 12.5px; font-weight: 600; } .delta.up { color: var(--green); } .delta.down { color: var(--red); } .delta span { color: var(--muted); font-weight: 400; }
-  .kpi svg { width: 100%; height: 34px; margin-top: 8px; }
-  .row2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-top: 16px; }
-  .card h2 { margin: 0; font-size: 15px; } .card .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); } .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
-  .bars div { margin: 0 0 13px; } .bars .t { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; } .bars .t b { font-weight: 600; }
-  .bars .track { height: 8px; border-radius: 4px; background: #f1ece7; } .bars .fill { height: 100%; border-radius: 4px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; } th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-  td { padding: 11px 10px; border-bottom: 1px solid var(--line); } tr:last-child td { border-bottom: 0; }
-  .status { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
-  .s-paid { background: #dcfce7; color: #166534; } .s-shipped { background: #dbeafe; color: #1e40af; } .s-pending { background: #fef3c7; color: #92400e; } .s-refunded { background: #fee2e2; color: #991b1b; }
-  .cust { display: flex; align-items: center; gap: 9px; } .cust .avatar { width: 26px; height: 26px; font-size: 11px; }
-`;
-
-/** Deterministic pseudo data, so every screenshot looks the same. */
-function series(n, seed, base, swing) {
-  let x = seed;
-  const rnd = () => ((x = (x * 9301 + 49297) % 233280) / 233280);
-  return Array.from({ length: n }, (_, i) => base + swing * (Math.sin(i / 3.2) * 0.35 + rnd() * 0.65) + i * swing * 0.02);
-}
-function linePath(values, w, h, pad = 4) {
-  const max = Math.max(...values), min = Math.min(...values);
-  return values.map((v, i) => `${i ? 'L' : 'M'}${(pad + (i * (w - 2 * pad)) / (values.length - 1)).toFixed(1)} ${(h - pad - ((v - min) / (max - min || 1)) * (h - 2 * pad)).toFixed(1)}`).join(' ');
-}
-const spark = (values, color) => `<svg viewBox="0 0 200 34" preserveAspectRatio="none"><path d="${linePath(values, 200, 34)}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
-
-function revenueChart() {
-  const w = 720, h = 262, now = series(30, 7, 1800, 1400), prev = series(30, 3, 1500, 1000);
-  const all = [...now, ...prev], max = Math.max(...all) * 1.08;
-  const pt = (v, i) => [40 + (i * (w - 56)) / 29, h - 26 - (v / max) * (h - 46)];
-  const path = vs => vs.map((v, i) => `${i ? 'L' : 'M'}${pt(v, i).map(n => n.toFixed(1)).join(' ')}`).join(' ');
-  const grid = [0, 1, 2, 3].map(k => { const y = h - 26 - (k / 3) * (h - 46); return `<line x1="40" x2="${w - 16}" y1="${y}" y2="${y}" stroke="#eef0f3"/><text x="32" y="${y + 4}" text-anchor="end" font-size="11" fill="#9ca3af">€${Math.round((max * k) / 3 / 100) / 10}k</text>`; }).join('');
-  const labels = [0, 7, 14, 21, 29].map((i, k) => `<text x="${pt(0, i)[0]}" y="${h - 6}" text-anchor="middle" font-size="11" fill="#9ca3af">${['Sep 13', 'Sep 20', 'Sep 27', 'Oct 4', 'Oct 12'][k]}</text>`).join('');
-  const area = `${path(now)} L${pt(0, 29)[0]} ${h - 26} L40 ${h - 26} Z`;
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%"><defs><linearGradient id="ar" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#b4532a" stop-opacity=".22"/><stop offset="1" stop-color="#b4532a" stop-opacity="0"/></linearGradient></defs>
-    ${grid}<path d="${area}" fill="url(#ar)"/><path d="${path(prev)}" fill="none" stroke="#c7cbd1" stroke-width="2" stroke-dasharray="4 4"/>
-    <path d="${path(now)}" fill="none" stroke="#b4532a" stroke-width="2.5"/>${labels}
-    <circle cx="${pt(now[29], 29)[0]}" cy="${pt(now[29], 29)[1]}" r="4.5" fill="#fff" stroke="#b4532a" stroke-width="2.5"/></svg>`;
-}
-
-const ICON = {
-  home: '<path d="M3 10.5 12 3l9 7.5V21H3z"/><path d="M9 21v-7h6v7"/>', box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
-  cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.4 12h11l2-8H6"/>', users: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4a4 4 0 0 1 0 8M22 21c0-3-1.5-5-4-5.6"/>',
-  repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>', tag: '<path d="M3 3h8l10 10-8 8L3 11z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
-  chart: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
-};
-const ico = n => `<svg class="i" viewBox="0 0 24 24">${ICON[n]}</svg>`;
-
-function admin() {
-  const orders = [
-    ['#4821', 'Mara Lindqvist', 'ML', 'Ethiopia Guji, Hearth Espresso ×2', '€66.45', 'Pending', '2 min ago'],
-    ['#4820', 'Jonas Brandt', 'JB', 'Monthly subscription · Filter', '€29.00', 'Paid', '18 min ago'],
-    ['#4819', 'Aiko Tanaka', 'AT', 'Kenya Nyeri AA ×2', '€36.00', 'Shipped', '1 h ago'],
-    ['#4818', 'Lucas Moreau', 'LM', 'Colombia Huila, Peru Decaf', '€28.50', 'Shipped', '3 h ago'],
-    ['#4817', 'Sofia Rossi', 'SR', 'Hearth Espresso 1 kg', '€45.90', 'Refunded', '5 h ago'],
-  ];
-  const top = [['Hearth Espresso', 412, '#1f1a17'], ['Ethiopia Guji', 296, '#2f5d50'], ['Colombia Huila', 241, '#b4532a'], ['Kenya Nyeri AA', 158, '#6b3a5b'], ['Peru Decaf', 97, '#5b6b3a']];
-  const kpi = (label, value, delta, up, vals, color) => `<div class="card kpi"><div class="label">${label}</div><div class="value">${value}</div>
-    <div class="delta ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${delta} <span>vs. last 30 days</span></div>${spark(vals, color)}</div>`;
-  return page('Overview — Ember & Oak Admin', ADMIN_CSS, `<aside>
-    <div class="logo">${LOGO}<div>Ember &amp; Oak<small>ADMIN</small></div></div>
-    <a class="on" href="/admin">${ico('home')}Overview</a><a href="#">${ico('cart')}Orders<span class="n">12</span></a><a href="#">${ico('box')}Products</a>
-    <a href="#">${ico('users')}Customers</a><a href="#">${ico('repeat')}Subscriptions</a><a href="#">${ico('tag')}Discounts</a>
-    <div class="sep">Insights</div><a href="#">${ico('chart')}Reports</a><a href="#">${ico('gear')}Settings</a>
-    <div class="me"><div class="avatar">FN</div><div><div style="color:#fff;font-weight:600">Frida Nowak</div><div style="font-size:12px;color:#8f8278">Head of Roasting</div></div></div>
-  </aside><main>
-    <header><div><h1>Good morning, Frida</h1><div class="sub">Here’s how the roastery did in the last 30 days.</div></div>
-      <div class="tools"><span class="pill">Sep 13 – Oct 12, 2026 ▾</span><span class="pill">Export</span><span class="pill dark">+ New product</span></div></header>
-    <div class="kpis">
-      ${kpi('Revenue', '€48,920', '12.4%', true, series(20, 11, 10, 6), '#b4532a')}
-      ${kpi('Orders', '1,284', '8.1%', true, series(20, 5, 10, 5), '#1f2937')}
-      ${kpi('Active subscriptions', '612', '3.6%', true, series(20, 9, 10, 3), '#2f5d50')}
-      ${kpi('Avg. order value', '€38.10', '1.9%', false, series(20, 2, 10, 4), '#9ca3af')}
-    </div>
-    <div class="row2"><div class="card"><div class="head"><h2>Revenue</h2><div class="legend"><span><i style="background:#b4532a"></i>This period</span><span><i style="background:#c7cbd1"></i>Previous period</span></div></div>${revenueChart()}</div>
-      <div class="card"><div class="head"><h2>Top coffees</h2><span style="color:var(--muted);font-size:12px">bags sold</span></div>
-        <div class="bars">${top.map(([n, v, c]) => `<div><div class="t"><b>${n}</b><span>${v}</span></div><div class="track"><div class="fill" style="width:${(v / 412) * 100}%;background:${c}"></div></div></div>`).join('')}</div></div></div>
-    <div class="card" style="margin-top:16px"><div class="head"><h2>Recent orders</h2><span class="pill">View all</span></div>
-      <table><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th></tr>
-      ${orders.map(([id, name, ini, items, total, st, when]) => `<tr><td><b>${id}</b></td><td><div class="cust"><div class="avatar">${ini}</div>${name}</div></td><td>${items}</td><td><b>${total}</b></td><td><span class="status s-${st.toLowerCase()}">${st}</span></td><td style="color:var(--muted)">${when}</td></tr>`).join('')}
-      </table></div>
-  </main>`);
+    <div class="panel"><h2>Order</h2>${cartLines(true)}
+      <div class="sum"><span>Subtotal</span><b>${euro(sub)}</b></div><div class="sum"><span>Deposit (3 bottles)</span><b>€0.75</b></div><div class="sum"><span>Delivery</span><b>Free</b></div>
+      <div class="sum total"><span>Total</span><span id="total">${euro(sub + 0.75)}</span></div></div></section></div>`), script);
 }
 
 // MARK: Relay API docs
@@ -417,10 +296,9 @@ export function demoSite(req, res) {
   }
   res.setHeader('content-type', 'text/html; charset=utf-8');
   if (p === '/' || p === '/shop') return res.end(shopHome());
-  if (p.startsWith('/shop/coffee/')) return res.end(shopProduct(p.split('/').pop()));
+  if (p.startsWith('/shop/juice/')) return res.end(shopProduct(p.split('/').pop()));
   if (p === '/shop/cart') return res.end(shopCart());
   if (p === '/shop/checkout') return res.end(shopCheckout());
-  if (p.startsWith('/admin')) return res.end(admin());
   if (p.startsWith('/docs')) return res.end(docs());
   res.statusCode = 404;
   res.end(page('Not found', SHOP_CSS, '<p style="padding:40px">Not found</p>'));
