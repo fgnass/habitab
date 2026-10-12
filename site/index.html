@@ -53,7 +53,7 @@ h1,h2,h3{text-wrap:balance}
     </div>
     <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
       <img src="img/start.png" alt="The Habitab window on its start page: the app icon, the name Habitab, the line '2 sessions · 5 tabs · 3 problems. Pick a tab on the left.' and a list of keyboard shortcuts; on the left a sidebar with two sessions grouped by project and live tab thumbnails of a juice shop and an API docs site" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px; box-shadow: 0 24px 60px rgba(21,35,26,0.18)">
-      <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 1 — The window. Two sessions on the left: Claude Code with four tabs, Codex with one. One Dock icon for all of them.</figcaption>
+      <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Two sessions on the left: Claude Code with four tabs, Codex with one. One Dock icon for all of them.</figcaption>
     </figure>
   </section>
 
@@ -72,7 +72,7 @@ h1,h2,h3{text-wrap:balance}
       </div>
       <figure style="flex: 0 1 360px; margin: 0; display: flex; flex-direction: column; gap: 10px">
         <img src="img/sidebar.png" alt="The sidebar: sessions grouped by project, each tab with a live thumbnail, one tab marked with 3 errors" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-        <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 2 — The sidebar. Projects, sessions, tabs; thumbnails are live.</figcaption>
+        <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Projects, sessions, tabs. The thumbnails are live.</figcaption>
       </figure>
     </div>
   </section>
@@ -92,7 +92,7 @@ h1,h2,h3{text-wrap:balance}
       </div>
       <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
         <img src="img/control.png" alt="The top bar while you have control: a hand icon with 'You have control · 9 s' and the status line 'You have control: the agent's next tool calls wait'" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-        <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 3 — You have control. The agent's next tool calls wait; ⇧⌘P does the same by hand.</figcaption>
+        <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">You have control. The agent's next tool calls wait until you give it back.</figcaption>
       </figure>
     </div>
   </section>
@@ -106,18 +106,18 @@ h1,h2,h3{text-wrap:balance}
         </div>
         <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 14px">
           <p style="margin: 0; color: #3C4A40">Describing a piece of a page in a chat window is slow and lossy. So is copying an error out of the console. And you only find out there <em>is</em> an error after you open the console, scroll, and decide whether that red line is the expected one or a new one.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>Habitab lets you point.</strong> Mark an area of the page (⇧⌘A), write a note. The agent gets your words, the URL, the elements inside the area and that part of the screen as an image. The page's context menu has “Send Element to Agent…” for the element under the pointer.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>And it shows problems before you ask.</strong> Console errors, uncaught exceptions and failed requests are counted per tab: a red count in the tab's row and in the top bar, cleared when the page loads a new document. Open the list (⇧⌘E) and send one problem or all of them to the agent, the same way as a marked area.</p>
+          <p style="margin: 0; color: #3C4A40"><strong>Habitab lets you point.</strong> Mark an area of the page, write a note. The agent gets your words, the URL, the elements inside the area and that part of the screen as an image. The page's context menu has “Send Element to Agent…” for the element under the pointer.</p>
+          <p style="margin: 0; color: #3C4A40"><strong>And it shows problems before you ask.</strong> Console errors, uncaught exceptions and failed requests are counted per tab: a red count in the tab's row and in the top bar, cleared when the page loads a new document. Open the list and send one problem or all of them to the agent, the same way as a marked area.</p>
         </div>
       </div>
       <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start">
         <figure style="flex: 1 1 440px; margin: 0; display: flex; flex-direction: column; gap: 10px">
           <img src="img/annotate.png" alt="The marking overlay over the page with the hint 'Mark an area of the page · Esc to cancel'" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-          <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 4 — ⇧⌘A dims the page; drag a rectangle, write a note.</figcaption>
+          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Drag a rectangle over the page and write a note.</figcaption>
         </figure>
         <figure style="flex: 1 1 440px; margin: 0; display: flex; flex-direction: column; gap: 10px">
           <img src="img/problems.png" alt="The problems list: a console error, a failed GET request with HTTP 503 and an uncaught ReferenceError, with a 'Send All to Agent' button" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-          <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 5 — Three problems on the checkout page, seconds old. One click sends them.</figcaption>
+          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Three problems on the checkout page, seconds old. One click sends them.</figcaption>
         </figure>
       </div>
       <p style="margin: 0; color: #3C4A40; font-size: 16px; max-width: 760px">Without a waiting agent, a note goes to the session's inbox: an idle Claude Code session starts a new turn with it, a busy one reads it between tool calls. Codex gets it through its queue. The agent then asks Habitab for the details with <code style="font-family: 'Courier Prime', monospace; font-size: 14px">wait_for_user_feedback</code>, a tool the launcher adds.</p>
@@ -138,7 +138,7 @@ h1,h2,h3{text-wrap:balance}
       </div>
       <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
         <img src="img/timeline.png" alt="The timeline strip under the status line: five thumbnails of the page as it changed, the last one selected" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-        <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 6 — ⇧⌘Y. Five changes, from the shop's front page to the checkout. 300 steps per session.</figcaption>
+        <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">The timeline: five changes, from the shop's front page to the checkout. It keeps 300 steps per session.</figcaption>
       </figure>
     </div>
   </section>
@@ -148,16 +148,16 @@ h1,h2,h3{text-wrap:balance}
     <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px; display: flex; flex-direction: column; gap: 32px">
       <div style="display: flex; flex-direction: column; gap: 12px; max-width: 720px">
         <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">It is still a browser.</h2>
-        <p style="margin: 0; color: #3C4A40">The real Chromium DevTools, docked and resizable, open in parallel with the agent. Responsive mode (⇧⌘M) with drag handles like Chrome's, the Tailwind breakpoints and an exact size, shared with the agent's <code style="font-family: 'Courier Prime', monospace; font-size: 15px">emulate</code>. Address bar, back, reload. Mute a whole session. An optional persistent profile per project, so logins survive restarts.</p>
+        <p style="margin: 0; color: #3C4A40">The real Chromium DevTools, docked and resizable, open in parallel with the agent. Responsive mode with drag handles like Chrome's, the Tailwind breakpoints and an exact size, shared with the agent's <code style="font-family: 'Courier Prime', monospace; font-size: 15px">emulate</code>. Address bar, back, reload. Mute a whole session. An optional persistent profile per project, so logins survive restarts.</p>
       </div>
       <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start">
         <figure style="flex: 1 1 440px; margin: 0; display: flex; flex-direction: column; gap: 10px">
           <img src="img/devtools.png" alt="The window with DevTools docked on the right, showing the Elements panel and Styles for the checkout page" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-          <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 7 — DevTools, docked. If a page needs full WebAssembly speed, pause the agent's debugger per project.</figcaption>
+          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">DevTools, docked. If a page needs full WebAssembly speed, pause the agent's debugger per project.</figcaption>
         </figure>
         <figure style="flex: 1 1 440px; margin: 0; display: flex; flex-direction: column; gap: 10px">
           <img src="img/responsive.png" alt="Responsive mode: a bar with sm, md, lg, xl, 2xl and Full, a size of 1124 by 728, and the page framed inside" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-          <figcaption style="font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">Fig. 8 — Responsive mode. Breakpoints, exact size, drag handles.</figcaption>
+          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Responsive mode: breakpoints, exact size, drag handles.</figcaption>
         </figure>
       </div>
     </div>
@@ -208,7 +208,7 @@ h1,h2,h3{text-wrap:balance}
       <pre style="flex: 1 1 440px; margin: 0; padding: 26px 28px; border: 1.2px solid #15231A; background: #F6F7F0; font-family: 'Courier Prime', monospace; font-size: 15px; line-height: 1.7; overflow-x: auto; white-space: pre; color: #15231A; align-self: flex-start"><span style="color: #3C4A40">$</span> git clone https://github.com/fgnass/habitab.git &amp;&amp; cd habitab
 <span style="color: #3C4A40">$</span> ./install.sh
 
-<span style="color: #3C4A40"># then in the app: Habitab → Setup… (⌘,)
+<span style="color: #3C4A40"># then in the app: Habitab → Setup…
 # or from the shell:</span>
 <span style="color: #3C4A40">$</span> habitab setup            <span style="color: #3C4A40"># preview</span>
 <span style="color: #3C4A40">$</span> habitab setup --apply
@@ -217,7 +217,7 @@ h1,h2,h3{text-wrap:balance}
   </section>
 
   <!-- FOOTER -->
-  <footer style="border-top: 1px solid #15231A; padding: 20px 32px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; font-family: 'Courier Prime', monospace; font-size: 13.5px; line-height: 1.5; color: #3C4A40">
+  <footer style="border-top: 1px solid #15231A; padding: 20px 32px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">
     <span style="display: flex; align-items: center; gap: 8px"><img src="img/icon.png" alt="" style="width: 18px; height: 18px"><span>Habitab · built on chrome-devtools-mcp and Electron</span></span>
     <span>Linux and Windows prepared, not tested · <a href="https://github.com/fgnass/habitab">Source</a></span>
   </footer>
