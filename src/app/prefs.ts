@@ -1,4 +1,4 @@
-// User preferences of the app (window layout, projects with a persistent profile).
+// User preferences of the app (window layout, per-project options).
 import fs from 'node:fs';
 import { paths } from '../shared/paths';
 
@@ -14,6 +14,8 @@ export interface Prefs {
   sidebarHidden?: boolean;
   /** Project roots whose browser profile (cookies, storage, cache) is stored on disk. */
   persistentProfiles?: string[];
+  /** Project roots where the agent's debugger pauses while the user tests a tab. */
+  pauseDebugger?: string[];
 }
 
 let cache: Prefs | undefined;

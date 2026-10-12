@@ -6,6 +6,20 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 const PRIVATE_ID = 1_000_000_000;
 
+/**
+ * Debugger settings a client makes once per CDP session. They are replayed
+ * when the debugger comes back after a pause (see SessionProxy.setDebugger).
+ */
+const DEBUGGER_SETUP = new Set(['Debugger.enable', 'Debugger.setAsyncCallStackDepth', 'Debugger.setPauseOnExceptions', 'Debugger.setBlackboxPatterns',
+  'Debugger.setBlackboxExecutionContexts', 'Debugger.setSkipAllPauses', 'Debugger.setBreakpointsActive']);
+
+/**
+ * Commands that show the agent works with a tab. Not setup (*.enable and the
+ * like, sent to every tab on attach), and not Runtime.callFunctionOn:
+ * chrome-devtools-mcp sends it to all tabs for each page list.
+ */
+const USE = /^(Input|Accessibility|DOM)\.(?!enable|disable)|^Page\.(navigate|reload|navigateToHistoryEntry|captureScreenshot|handleJavaScriptDialog|printToPDF)$|^Runtime\.evaluate$|^Emulation\.set(DeviceMetrics|UserAgent|Geolocation|CPUThrottling)/;
+
 export interface ProxyHooks {
   sessionId: string;
   browserContextId: string;
@@ -18,6 +32,10 @@ export interface ProxyHooks {
   agentInput: (targetId: string, delta: 1 | -1) => void;
   /** The agent set (params) or cleared (null) device emulation of a tab. */
   agentEmulation: (targetId: string, params: any) => void;
+  /** The agent works with a tab (see USE). */
+  agentUse: (targetId: string) => void;
+  /** The agent's work turned the paused debugger of a tab on again. */
+  debuggerBack: (targetId: string) => void;
   /** The agent brings a tab to the front: show it in its session, never raise the window. */
   activateTab: (targetId: string) => void;
 }
@@ -26,6 +44,7 @@ export class SessionProxy {
   private server = http.createServer((req, res) => void this.http(req, res));
   private wss = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 * 1024 });
   private sockets = new Set<WebSocket>();
+  private debuggerSwitches = new Set<(targetId: string, on: boolean) => Promise<void>>();
   port = 0;
 
   constructor(private hooks: ProxyHooks) {
@@ -46,6 +65,16 @@ export class SessionProxy {
     for (const s of this.sockets) s.close();
     this.wss.close();
     this.server.close();
+  }
+
+  /**
+   * Turns the client's debugger in a tab (and its workers and worklets) off or
+   * on again. An enabled debugger makes V8 run WebAssembly as slow debug code.
+   * While it is off, the client's debugger settings are kept and answered
+   * here; real work of the agent in the tab turns it on again by itself.
+   */
+  setDebugger(targetId: string, on: boolean): Promise<void> {
+    return Promise.all([...this.debuggerSwitches].map(f => f(targetId, on))).then(() => {});
   }
 
   private upstreamHttp(): string {
@@ -97,6 +126,10 @@ export class SessionProxy {
     const foreignSessions = new Set<string>();
     const windowIds = new Map<number, string>();     // emulated window id -> target id
     const filters = new Map<number, (m: any) => any>();
+    const pageOf = new Map<string, string>();        // CDP session id -> page target id (also for its workers)
+    const debuggerSetup = new Map<string, Map<string, unknown>>(); // CDP session id -> Debugger.* method -> params
+    const debuggerOff = new Set<string>();           // tab target ids
+    const answers = new Map<number, () => void>();
     let privateId = PRIVATE_ID;
 
     const toClient = (m: unknown) => { if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(m)); };
@@ -114,14 +147,31 @@ export class SessionProxy {
       return windowIds.size;
     };
 
+    /** Sends a command of the proxy itself; resolves with the answer (also an error). */
+    const command = (method: string, params: unknown, sessionId: string) => new Promise<void>(resolve => {
+      const id = privateId++;
+      answers.set(id, resolve);
+      toUpstream({ id, method, params, sessionId });
+    });
+    const switchDebugger = async (targetId: string, on: boolean) => {
+      if (debuggerOff.has(targetId) === !on) return;
+      if (on) debuggerOff.delete(targetId); else debuggerOff.add(targetId);
+      const sessions = [...debuggerSetup.keys()].filter(x => pageOf.get(x) === targetId);
+      await Promise.all(sessions.map(async x => {
+        if (!on) return command('Debugger.disable', {}, x);
+        for (const [method, params] of debuggerSetup.get(x)!) await command(method, params, x);
+      }));
+    };
+    this.debuggerSwitches.add(switchDebugger);
+
     upstream.on('open', () => { for (const m of queue.splice(0)) upstream.send(m); });
     upstream.on('close', () => client.close());
     upstream.on('error', () => client.close());
-    client.on('close', () => { this.sockets.delete(client); upstream.close(); });
+    client.on('close', () => { this.sockets.delete(client); this.debuggerSwitches.delete(switchDebugger); upstream.close(); });
 
     upstream.on('message', data => {
       const msg = JSON.parse(String(data));
-      if (msg.id >= PRIVATE_ID) return;
+      if (msg.id >= PRIVATE_ID) { answers.get(msg.id)?.(); answers.delete(msg.id); return; }
       if (msg.sessionId && foreignSessions.has(msg.sessionId)) return;
       if (msg.id !== undefined) {
         const f = filters.get(msg.id);
@@ -149,10 +199,14 @@ export class SessionProxy {
           }
           ownTargets.add(p.targetInfo.targetId);
           ownSessions.set(p.sessionId, p.targetInfo.targetId);
+          // Workers, worklets and frames belong to the page above them (not to its "tab" target).
+          pageOf.set(p.sessionId, (p.targetInfo.type !== 'page' && msg.sessionId && pageOf.get(msg.sessionId)) || p.targetInfo.targetId);
           break;
         case 'Target.detachedFromTarget':
           if (foreignSessions.delete(p.sessionId)) return;
           ownSessions.delete(p.sessionId);
+          pageOf.delete(p.sessionId);
+          debuggerSetup.delete(p.sessionId);
           break;
       }
       toClient(msg);
@@ -166,6 +220,25 @@ export class SessionProxy {
       const msg = JSON.parse(raw);
       const { id, method, params = {}, sessionId } = msg;
       if (sessionId && foreignSessions.has(sessionId)) return fail(id, 'Session not found', sessionId);
+      const page = sessionId ? pageOf.get(sessionId) : undefined;
+      if (page && typeof method === 'string' && method.startsWith('Debugger.')) {
+        if (method === 'Debugger.disable') debuggerSetup.delete(sessionId);
+        else if (DEBUGGER_SETUP.has(method)) {
+          const setup = debuggerSetup.get(sessionId) ?? new Map<string, unknown>();
+          setup.delete(method); // Map order: the latest call is replayed last.
+          setup.set(method, params);
+          debuggerSetup.set(sessionId, setup);
+        }
+        // Setup while the debugger is off: kept for later, answered here.
+        if (debuggerOff.has(page) && (DEBUGGER_SETUP.has(method) || method === 'Debugger.disable')) {
+          return reply(id, method === 'Debugger.enable' ? { debuggerId: `habitab-${sessionId}` } : {}, sessionId);
+        }
+      }
+      // Real work in a tab (also with the debugger itself) turns its debugger on again.
+      if (page && typeof method === 'string' && (USE.test(method) || method.startsWith('Debugger.'))) {
+        if (debuggerOff.has(page)) { await switchDebugger(page, true); h.debuggerBack(page); }
+        if (USE.test(method)) h.agentUse(page);
+      }
 
       // Mark synthetic input, so the app can tell it from the user's own.
       const inputTarget = typeof method === 'string' && method.startsWith('Input.') && sessionId ? ownSessions.get(sessionId) : undefined;

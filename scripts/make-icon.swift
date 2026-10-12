@@ -31,9 +31,11 @@ func page() -> CGPath {
 }
 
 // A browser tab with a gable roof; its flared feet run into the page.
+// It reaches below the page edge: two shapes that only touch show a seam.
 func house() -> CGPath {
     let p = CGMutablePath()
-    p.move(to: CGPoint(x: 202, y: 730))
+    p.move(to: CGPoint(x: 202, y: 760))
+    p.addLine(to: CGPoint(x: 202, y: 730))
     p.addCurve(to: CGPoint(x: 262, y: 680), control1: CGPoint(x: 236, y: 730), control2: CGPoint(x: 262, y: 712))
     p.addLine(to: CGPoint(x: 262, y: 486))
     p.addQuadCurve(to: CGPoint(x: 278, y: 454), control: CGPoint(x: 262, y: 466))
@@ -43,6 +45,7 @@ func house() -> CGPath {
     p.addQuadCurve(to: CGPoint(x: 762, y: 486), control: CGPoint(x: 762, y: 466))
     p.addLine(to: CGPoint(x: 762, y: 680))
     p.addCurve(to: CGPoint(x: 822, y: 730), control1: CGPoint(x: 762, y: 712), control2: CGPoint(x: 788, y: 730))
+    p.addLine(to: CGPoint(x: 822, y: 760))
     p.closeSubpath()
     return p
 }

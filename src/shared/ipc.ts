@@ -22,6 +22,10 @@ export interface SessionMeta {
   roots?: string[];
   /** Claude Code runs this server as a channel (started with the development channel flag). */
   channel?: boolean;
+  /** Claude Code gave the server its inbox socket (cross-session messaging): feedback can wake the session. */
+  inbox?: boolean;
+  /** Codex has `codex queue`: feedback can be queued as a prompt for the thread (agentSessionId). */
+  codexQueue?: boolean;
   serverName?: string;
   originalCommand?: string[];
   startedAt?: string;
@@ -40,11 +44,14 @@ export type Message =
   | { type: 'feedbackRequest'; requestId: string; question?: string }
   /** The wait ended without an answer (timeout or cancelled by the client). */
   | { type: 'feedbackCancel'; requestId: string }
-  /** Feedback while no call waits: pushed into the Claude Code session as a channel event. */
+  /** Feedback while no call waits: pushed into the Claude Code session (channel event or inbox message). */
   | { type: 'feedbackPush'; content: string }
   /** The user's answer: comments and pages as text, the marked areas as PNGs (base64). */
   | { type: 'feedbackResult'; requestId: string; text: string; images: string[] }
   | { type: 'bye'; reason: string };
+
+/** Feedback reaches the agent at once, also when no wait_for_user_feedback call waits. */
+export const canPush = (m: SessionMeta): boolean => !!(m.channel || m.inbox || (m.codexQueue && m.agentSessionId));
 
 export class LineSocket extends EventEmitter {
   private buffer = '';

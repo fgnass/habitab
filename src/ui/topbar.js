@@ -4,11 +4,6 @@ const url = $('url');
 let editing = false;
 let resumeAt = 0, resumeTotal = 0, countdown;
 
-const PHASE = {
-  connected: 'Connected', tool: 'Tool running', idle: 'Idle',
-  disconnected: 'Connection lost', ended: 'Connection ended', kept: 'Ended · browser open',
-};
-
 api.onState(state => {
   document.body.classList.toggle('no-sidebar', state.sidebar === 'hidden');
   $('sidebar').classList.toggle('on', state.sidebar !== 'full');
@@ -24,11 +19,6 @@ api.onState(state => {
   const size = nav?.fixedSize;
   $('size').classList.toggle('hidden', !size);
   if (size) $('sizeText').textContent = `${size.width}×${size.height}`;
-  $('dot').className = 'dot ' + (s?.phase ?? 'idle');
-  const tool = s?.currentTool;
-  $('chip').className = 'chip' + (tool ? ' tool' : '');
-  $('status').textContent = state.notice ? state.notice : !s ? '' : s.feedback ? 'Waiting for your feedback' : tool ? `${s.held ? 'Waiting · ' : ''}${tool.tool}${tool.summary ? ' · ' + tool.summary : ''}` : s.protectedBy ?? PHASE[s.phase];
-  $('chip').title = $('status').textContent;
   const live = s && s.phase !== 'ended' && s.phase !== 'kept';
   $('hold').classList.toggle('hidden', !live);
   $('hold').classList.toggle('held', !!s?.held);
@@ -40,6 +30,26 @@ api.onState(state => {
   $('hold').title = auto ? 'You clicked in the page, so the agent waits. Click to keep control until you resume (⇧⌘P).'
     : s?.held ? 'Let the agent go on (⇧⌘P)' : "Hold the agent's new tool calls (⇧⌘P)";
   holdLabel(s);
+  // Paused debugger, or a hint when the page is busy while the agent's debugger runs.
+  const paused = !!nav?.debuggerPaused, busy = !!nav?.busy && live && !!s?.browser && !paused;
+  $('debugger').classList.toggle('hidden', !paused && !busy);
+  $('debugger').classList.toggle('on', paused);
+  $('debugger').classList.toggle('busy', busy);
+  if (paused || busy) {
+    const icon = paused ? 'bug-off' : 'gauge';
+    if ($('debuggerIcon').dataset.name !== icon) { $('debuggerIcon').replaceChildren(window.icon(icon)); $('debuggerIcon').dataset.name = icon; }
+    $('debuggerText').textContent = paused ? 'Debugger Paused' : 'High CPU';
+    $('debugger').title = paused
+      ? "The agent's debugger is paused in this tab, so WebAssembly and audio worklets run at full speed. It comes back when the agent works in this tab. Click to turn it on now."
+      : "This page uses a lot of CPU. The agent's debugger slows down WebAssembly and audio worklets. Click to pause it while you test (for all tabs of this project).";
+  }
+  // Problems of the page: the button opens the list (it stays while the list is open).
+  const pr = nav?.problems ?? [];
+  $('problems').classList.toggle('hidden', !pr.length && !state.problemsOpen);
+  $('problems').classList.toggle('on', !!state.problemsOpen);
+  $('problemsText').textContent = String(pr.length);
+  const nc = pr.filter(p => p.kind === 'console').length, nn = pr.length - nc;
+  $('problems').title = `${[nc && `${nc} console error${nc > 1 ? 's' : ''}`, nn && `${nn} failed request${nn > 1 ? 's' : ''}`].filter(Boolean).join(', ') || 'No problems'} on this page. Click to show them and send them to the agent (⇧⌘E).`;
   $('devtools').disabled = !nav;
   $('responsive').disabled = !nav;
   $('annotate').disabled = !nav;
@@ -76,4 +86,6 @@ $('sidebar').onclick = () => api.action('sidebar');
 $('responsive').onclick = () => api.action('responsive');
 $('annotate').onclick = () => api.action('annotate');
 $('hold').onclick = () => api.action('hold');
+$('debugger').onclick = () => api.action('debugger');
+$('problems').onclick = () => api.action('problems');
 $('sizeReset').onclick = () => api.action('resetSize');

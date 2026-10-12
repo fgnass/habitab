@@ -4,14 +4,12 @@
 <link rel="stylesheet" href="style.css">
 <style>
   body { display: flex; align-items: center; gap: 4px; padding: 0 10px 0 8px; background: var(--bar); border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
-  button, input, .chip { -webkit-app-region: no-drag; }
+  button, input { -webkit-app-region: no-drag; }
   button { width: 30px; height: 28px; display: grid; place-items: center; padding: 0; }
   button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
   button.wide { width: auto; padding: 0 9px; gap: 6px; display: flex; align-items: center; font-size: 12px; }
   #url { flex: 1; min-width: 120px; height: 28px; border: 0; outline: 0; border-radius: 7px; padding: 0 10px; background: var(--field); -webkit-user-select: text; user-select: text; }
   #url:focus { background: var(--page); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
-  .chip { display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 3px 8px; border-radius: 6px; max-width: 280px; color: var(--text-2); }
-  .chip.tool { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
   .size { font-size: 11px; padding: 2px 4px 2px 8px; border-radius: 6px; background: var(--field); display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
   .size button { width: 18px; height: 18px; font-size: 10px; }
   .hidden { display: none !important; }
@@ -24,6 +22,12 @@
   /* Automatic control: the filled part shrinks until the agent resumes. */
   .held.auto, .held.auto:hover:not(:disabled) { background: linear-gradient(to right, color-mix(in srgb, #f6c344 30%, transparent) var(--left, 100%), color-mix(in srgb, #f6c344 12%, transparent) var(--left, 100%)); }
   #holdText { font-variant-numeric: tabular-nums; }
+  /* The page uses much CPU while the agent's debugger slows it down. */
+  #debugger.busy { color: #b7791f; }
+  /* Console errors and failed requests of the page. */
+  #problems { color: var(--red); }
+  #problems.on { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
+  #problemsText { font-variant-numeric: tabular-nums; font-weight: 600; }
 </style>
 <button id="sidebar" title="Sidebar: full width or thumbnails only (⌘\)"><span data-icon="panel-left"></span></button>
 <button id="back" title="Back (⌘[)"><span data-icon="chevron-left"></span></button>
@@ -31,7 +35,8 @@
 <button id="reload" title="Reload (⌘R)"><span data-icon="rotate-cw"></span></button>
 <input id="url" placeholder="Address or search" spellcheck="false">
 <span id="size" class="size hidden" title="Page size set by the agent"><span id="sizeText"></span><button id="sizeReset" title="Reset size"><span data-icon="x" class="small"></span></button></span>
-<span id="chip" class="chip"><span id="dot" class="dot"></span><span id="status" class="ellipsis"></span></span>
+<button id="debugger" class="wide hidden"><span id="debuggerIcon"></span><span id="debuggerText"></span></button>
+<button id="problems" class="wide hidden"><span data-icon="circle-alert"></span><span id="problemsText"></span></button>
 <button id="hold" class="wide" title="Hold the agent's new tool calls (⇧⌘P)"><span data-icon="hand"></span><span id="holdText">Take Control</span></button>
 <button id="annotate" title="Mark an area for the agent (⇧⌘A)"><span data-icon="message-square-plus"></span></button>
 <button id="responsive" title="Responsive mode (⇧⌘M)"><span data-icon="monitor-smartphone"></span></button>

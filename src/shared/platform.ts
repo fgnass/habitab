@@ -83,11 +83,16 @@ export function processList(): ProcessRow[] {
 
 /** Executable name of a process (argv[0] base name). */
 export function processName(pid: number): string | undefined {
+  if (platform === 'win32') return processList().find(p => p.pid === pid)?.command.split(/[\\/]/).pop()?.split(' ')[0];
+  const exe = processExecutable(pid);
+  return exe && path.basename(exe);
+}
+
+/** argv[0] of a process (a full path when it was started with one). */
+export function processExecutable(pid: number): string | undefined {
   try {
-    if (platform === 'win32') return processList().find(p => p.pid === pid)?.command.split(/[\\/]/).pop()?.split(' ')[0];
-    const cmd = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).trim();
-    const first = cmd.split(' ')[0];
-    return path.basename(first);
+    if (platform === 'win32') return processList().find(p => p.pid === pid)?.command.split(' ')[0];
+    return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).trim().split(' ')[0] || undefined;
   } catch { return undefined; }
 }
 

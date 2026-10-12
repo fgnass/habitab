@@ -27,24 +27,73 @@ Habitab.app (Electron)
      and tabs as embedded Chromium views
    • one CDP proxy per session: the MCP server only sees the tabs of its
      session; new tabs/popups land in the same session
-   • sidebar: one row per session with a small live thumbnail of its current tab
-     (stable order, older tabs folded away); full width or thumbnails only (⌘\),
+   • sidebar: one row per active tab with a small live thumbnail (stable order),
+     grouped by session under a quiet header (client, project, state, the
+     session's options and its menu); tabs that neither the agent nor the user used
+     during the session's last 25 tool calls fold away as inactive tabs; full
+     width or thumbnails only (⌘\),
      View → Show Sidebar (⌃⌘S) hides it
+   • pause the agent's debugger while you test (per project, session menu): an
+     enabled CDP debugger makes V8 run WebAssembly as slow debug code (also in
+     audio worklets). Your input in a tab pauses it; the agent's next work in
+     that tab turns it on again. A tab with high CPU use shows a hint in the
+     top bar
    • persistent profile per project (optional): cookies, localStorage, IndexedDB,
      service workers and cache are stored on disk and survive app restarts; one
      live session uses the profile, parallel ones start with a copy of its cookies
-   • docked DevTools (resizable), address bar
+   • docked DevTools (resizable), address bar, mute a whole session (its menu)
+   • status line under the top bar, always there (the same height in every
+     session): the agent's current or last tool call (time, name, duration),
+     short notices. Its one button (⇧⌘Y) opens the timeline downwards over the
+     page: thumbnails of the changes on top, then all calls of the chosen change
+     with scripts and errors. The hovered link's URL shows in a bubble at the
+     bottom of the page
    • responsive mode (⇧⌘M): fills the free space by default (zoom: fit); drag
-     handles like Chrome's, Tailwind breakpoints (sm–2xl), device presets
-   • take control: a click or key press in a page holds the agent's next
-     tool calls; it goes on after 10 s without input, when you switch to
-     another app, or on Resume
+     handles like Chrome's, Tailwind breakpoints (sm–2xl), width × height
+   • take control: a click in a page holds the agent's next tool calls (key
+     presses only after a click since you came back to Habitab, so Cmd+Tab
+     does not count); it goes on after 10 s without input, when you switch
+     to another app, or on Resume
+   • app restart: connected and pinned sessions come back with their tabs,
+     responsive settings and cookies (sessions.json); the launchers reconnect
+     and the agents continue (page ids change). localStorage and IndexedDB
+     survive only with a persistent profile
    • agents never raise the window (bringToFront only switches the tab)
    • feedback: the launcher adds a `wait_for_user_feedback` tool; the user marks an
      area of the page (⇧⌘A) and writes a comment; the agent gets comment, URL,
      elements and the area as an image. Without a waiting agent it is kept for the
      next call (and copied to the clipboard)
-   • Claude Code channel: started with
+   • feedback on an earlier screenshot: with a timeline change open, marking an
+     area (⇧⌘A) works on its screenshot; the agent gets that part of it and the
+     note that it is an earlier state (after which call, when, which URL)
+   • send element: the page's context menu has "Send Element to Agent…"; the
+     marking overlay opens with the element under the pointer already marked
+   • problems: console errors (also uncaught exceptions) and failed requests
+     (HTTP ≥ 400, network errors) per tab, repeats counted, cleared by a new
+     document; "3 errors" in the tab's row (thumbnails only: a red count on the
+     thumbnail) and a button in the top bar open the list (⇧⌘E). One problem or all go to the agent like a marked area;
+     the note that wakes the agent has no page text, the tool result marks the
+     lines as page content
+   • timeline (⇧⌘Y, in the status line): what the agent did, with screenshots of its tab. A
+     screenshot follows each tool call at once (the launcher reports the end
+     before the agent gets the answer), and again after 400 ms when no new call
+     started (pages that were still painting). One card per change of the page; calls that left
+     it as it was join the card before ("+N"). Only thumbnails (details in their
+     tooltips); a click shows the screenshot large, and its calls in the status line. Screenshots are
+     files in `timeline/<session>/` (300 steps per session), deleted with the
+     session
+   • Claude Code inbox: without a waiting agent, the launcher posts a short note
+     (user's words and URL) to the session's inbox socket
+     (CLAUDE_CODE_MESSAGING_SOCKET, cross-session messaging). An idle session
+     starts a new turn, a busy one reads it between tool calls; Claude then
+     calls `wait_for_user_feedback` for the details. The session accepts it
+     without asking because the launcher is its child process. The line format
+     is internal to Claude Code (measured with 2.1.296); no flag needed
+   • Codex queue: for Codex, the launcher queues the same note for the thread
+     with `codex queue --thread <id>` (the codex executable of its parent
+     process, Codex 0.162+). An idle session starts a new turn with it, as if
+     the user typed it
+   • Claude Code channel (wins over the inbox): started with
      `claude --dangerously-load-development-channels server:chrome-devtools`
      (the name of the server entry), a marked area reaches Claude at once as a
      channel event; Claude then calls `wait_for_user_feedback` for the details.
@@ -86,7 +135,7 @@ Running it again updates an existing installation.
 ```bash
 npm install
 npm start          # electron .
-npm run preview    # look at changes before installing: separate instance with demo sessions
+npm run preview    # look at changes before installing: separate instance with demo projects (tests/integration/demo-site.mjs)
 npm run dist       # release/*/Habitab.app (ad-hoc signed)
 ```
 

@@ -4,13 +4,14 @@
 // MCP messages between client and server. The server gets --browserUrl of a
 // local port owned by this launcher. The first DevTools connection to that
 // port asks the app for the session browser and forwards to its endpoint.
-import { ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { ChildProcess, execFile, execFileSync, spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 import { newSessionId, SessionMeta } from '../shared/ipc';
 import { log, openLog, paths } from '../shared/paths';
 import { applyClaudeSessionFile, codexThreadName, collectMeta } from '../shared/session-info';
 import { parseCommand, rewriteServerArgs, sanitizeConfig, ServerCommand } from '../shared/server-command';
+import { processExecutable } from '../shared/platform';
 import { ManagerLink } from './manager-link';
 
 export async function runMcp(original: string[]): Promise<void> {
@@ -54,6 +55,8 @@ class Launcher {
   private heldTimer?: NodeJS.Timeout;
   private shuttingDown = false;
   private lastClaudeCheck = Date.now();
+  /** The codex executable that has `codex queue`. */
+  private codexBin?: string;
 
   constructor(private original: string[], private cmd: ServerCommand) {
     this.meta = { ...collectMeta(), originalCommand: original, serverName: process.env.HABITAB_SERVER_NAME };
@@ -62,11 +65,17 @@ class Launcher {
       launch: { proxyServer: cmd.launch.proxyServer, viewport: cmd.launch.viewport, acceptInsecureCerts: cmd.launch.acceptInsecureCerts },
     }));
     this.link.onHold = hold => this.setHold(hold);
-    // Claude Code channel: the event appears in the session like a new message.
+    // Claude Code: the note appears in the session like a new message. A channel
+    // (opted in with the development flag) wins over the inbox socket.
     this.link.onFeedbackPush = content => {
-      if (!this.meta.channel) return;
-      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content, meta: { kind: 'feedback' } } }) + '\n');
-      log('feedback pushed as channel event');
+      if (this.meta.channel) {
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content, meta: { kind: 'feedback' } } }) + '\n');
+        log('feedback pushed as channel event');
+      } else if (this.meta.inbox) {
+        void postToInbox(content);
+      } else if (this.codexBin && this.meta.agentSessionId) {
+        void postToCodexQueue(this.codexBin, this.meta.agentSessionId, content);
+      }
     };
     this.link.onFeedback = m => this.finishFeedback(m.requestId, [
       { type: 'text', text: `${m.text}\n\n${FEEDBACK_FOLLOW_UP}` },
@@ -159,7 +168,16 @@ class Launcher {
         const name = String(info.name ?? '').toLowerCase();
         const client = KNOWN_CLIENTS.find(c => name.includes(c));
         if (client) { this.meta.client = client; this.meta.clientSource = 'clientInfo'; }
-        if (this.meta.client === 'claude') this.meta.channel = channelEnabled();
+        if (this.meta.client === 'claude') {
+          this.meta.channel = channelEnabled();
+          this.meta.inbox = !!process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+        }
+        if (this.meta.client === 'codex') void codexQueueCommand().then(bin => {
+          if (!bin) return;
+          this.codexBin = bin;
+          this.meta.codexQueue = true;
+          this.link.sendMeta(this.meta);
+        });
         log(`initialize clientInfo=${JSON.stringify(info)}`);
         this.link.sendMeta(this.meta);
       } else if (msg.method === 'tools/call') {
@@ -310,6 +328,7 @@ const FEEDBACK_TOOL = {
   name: 'wait_for_user_feedback',
   description: 'Asks the user to point at something in the browser. Habitab shows your question; the user marks an area of the page and writes a comment. ' +
     'Returns the comment, the page URL, the HTML elements in the marked area and the area as an image. ' +
+    'The user can also send console errors and failed requests of the page from Habitab\'s problem list; these come as text. ' +
     'Waits until the user answers or the timeout ends. Use it when visual feedback from the user helps, for example "Which element do you mean?" or "What should change here?".',
   inputSchema: {
     type: 'object',
@@ -334,6 +353,72 @@ function channelEnabled(): boolean {
   } catch { return false; }
 }
 
+/**
+ * Posts a message into the Claude Code session through its inbox socket
+ * (cross-session messaging, CLAUDE_CODE_MESSAGING_SOCKET): an idle session
+ * starts a new turn with it, a busy one reads it between tool calls. The
+ * launcher is a child of the claude process, so the session accepts it
+ * without asking the user. The socket is documented, the line format only in
+ * Claude Code's debug log (measured with 2.1.296).
+ */
+function postToInbox(text: string): Promise<boolean> {
+  const socketPath = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  const token = process.env.CLAUDE_CODE_MESSAGING_TOKEN;
+  return new Promise(resolve => {
+    if (!socketPath) return resolve(false);
+    let answer = '', finished = false;
+    const socket = net.connect(socketPath);
+    const done = (ok: boolean, why: string) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      socket.destroy();
+      log(`feedback pushed to the Claude Code inbox: ${why}${answer.trim() ? ` (${answer.trim().slice(0, 300)})` : ''}`);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => done(true, 'sent'), 3000);
+    socket.setEncoding('utf8');
+    socket.on('data', d => { answer += d; });
+    socket.once('error', e => done(false, `failed: ${e.message}`));
+    socket.once('close', () => done(true, 'sent'));
+    socket.once('connect', () => {
+      if (token) socket.write(JSON.stringify({ type: 'auth', token }) + '\n');
+      socket.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n');
+      socket.end();
+    });
+  });
+}
+
+/**
+ * The codex executable of the client, if it has `codex queue` (Codex 0.162+).
+ * Only the parent process counts, so the command matches the running Codex.
+ * HABITAB_CODEX_COMMAND replaces it (tests).
+ */
+function codexQueueCommand(): Promise<string | undefined> {
+  const parent = processExecutable(process.ppid);
+  const bin = process.env.HABITAB_CODEX_COMMAND || (parent && /^codex/i.test(path.basename(parent)) ? parent : undefined);
+  return new Promise(resolve => {
+    if (!bin) return resolve(undefined);
+    execFile(bin, ['queue', '--help'], { timeout: 10_000 }, err => {
+      log(`codex queue ${err ? 'not available' : 'available'} (${bin})`);
+      resolve(err ? undefined : bin);
+    });
+  });
+}
+
+/**
+ * Queues a prompt for the Codex thread with `codex queue`: an idle session
+ * starts a new turn with it, a busy one takes it after the current turn.
+ */
+function postToCodexQueue(bin: string, thread: string, text: string): Promise<boolean> {
+  return new Promise(resolve => {
+    execFile(bin, ['queue', '--thread', thread, '--message', text], { timeout: 30_000 }, (err, stdout, stderr) => {
+      log(`feedback queued for Codex thread ${thread}: ${err ? `failed (${(stderr || err.message).trim().slice(0, 300)})` : stdout.trim().slice(0, 200)}`);
+      resolve(!err);
+    });
+  });
+}
+
 /** Appended to every answer: keeps the feedback loop going without blocking the agent's work. */
 const FEEDBACK_FOLLOW_UP = 'When you have acted on this feedback, call wait_for_user_feedback again (for example "Is it right now?") ' +
   'so the user can check the result or point at the next thing. Feedback the user gives in the meantime is kept and returned by that call.';
@@ -352,7 +437,7 @@ When you tell the user about a page, name it by its title or URL (for example "t
 The user can point at things in this browser: call wait_for_user_feedback (with a short question) whenever you need the user to show you something on the page, \
 for example when a request is about "this button", "here" or "that area", when it is unclear which element is meant, or when you want the user to check a visual change. \
 The user marks an area and writes a comment; you get the comment, the elements in the area and a screenshot of it. Prefer this over asking for a description in the chat. \
-The user can also mark an area on their own: then a short event says so, and calling wait_for_user_feedback returns the details at once.`;
+The user can also mark an area or send console errors and failed requests on their own: then a short event says so, and calling wait_for_user_feedback returns the details at once.`;
 
 function idKey(id: unknown): string | undefined {
   if (typeof id === 'number') return `n:${id}`;
@@ -369,7 +454,8 @@ function parse(line: Buffer): any[] {
 
 function summarize(args: Record<string, unknown>): string | undefined {
   for (const k of ['url', 'uid', 'key', 'text', 'function', 'filePath']) {
-    if (typeof args[k] === 'string') return (args[k] as string).slice(0, 120);
+    // Scripts a little longer: the timeline shows them when the user opens a change's calls.
+    if (typeof args[k] === 'string') return (args[k] as string).slice(0, k === 'function' ? 1000 : 120);
   }
   return undefined;
 }

@@ -13,10 +13,14 @@ export const paths = {
   get backups() { return path.join(this.home, 'backups'); },
   get manifest() { return path.join(this.home, 'install-manifest.json'); },
   get state() { return path.join(this.home, 'state.json'); },
+  /** Open sessions with their tabs and cookies, restored after an app restart. */
+  get sessions() { return path.join(this.home, 'sessions.json'); },
   /** Window layout preferences of the app. */
   get ui() { return path.join(this.home, 'ui.json'); },
   get appPathFile() { return path.join(this.home, 'app-path'); },
   get chromium() { return path.join(this.home, 'chromium'); },
+  /** Screenshots of the sessions' timelines, one folder per session. */
+  get timeline() { return path.join(this.home, 'timeline'); },
 };
 
 export function ensureHome(): void {

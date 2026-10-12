@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Status line under the top bar: always one line at the same place, with the
+     timeline button at its right end. Open, the thumbnails follow below it (a
+     fixed height). Details float in a panel that opens only on demand, over the
+     page; nothing else moves. */
+  html, body { background: transparent; overflow: hidden; }
+  #panel { position: relative; background: var(--bar); }
+  /* The line: timeline button | time | name and summary, the details chip right after it. */
+  #line { height: 28px; display: flex; gap: 10px; align-items: center; padding: 0 12px 0 6px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  #line .t { flex: none; width: 52px; }
+  #line .n { flex: 0 1 auto; min-width: 0; }
+  #line .wide { flex: 1; min-width: 0; }
+  #line .state { flex: none; font-size: 11.5px; } .state.running { color: var(--accent); } .state.held { color: #b7791f; }
+  #strip { display: none; height: 59px; gap: 2px; padding: 0 8px; overflow-x: auto; overflow-y: hidden; align-items: center; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+  #strip::-webkit-scrollbar { display: none; }
+  body.open #strip { display: flex; }
+  .step { flex: none; padding: 4px; border-radius: 7px; }
+  .step:hover { background: var(--hover); }
+  .step .thumb { width: 66px; height: 41px; border-radius: 4px; overflow: hidden; background: var(--field); box-shadow: 0 0 0 .5px var(--border); display: grid; place-items: center; }
+  .step.sel .thumb { box-shadow: 0 0 0 2px var(--accent); }
+  .step.error .thumb { box-shadow: 0 0 0 1.5px var(--red); }
+  .step .thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+  .strip-empty { padding: 0 6px; color: var(--text-3); font-size: 11.5px; white-space: nowrap; }
+
+  .t { color: var(--text-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-user-select: text; user-select: text; }
+  .n b { font-weight: 600; } .n .s { color: var(--text-3); }
+  .n .link { cursor: pointer; text-underline-offset: 2px; } .n .link:hover { color: var(--text-2); text-decoration: underline; }
+  .failed b { color: var(--red); }
+  .d { text-align: right; color: var(--text-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .d.running { color: var(--accent); } .d.held { color: #b7791f; }
+  .wide { grid-column: 1 / 4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+  .wide.notice { color: var(--accent); } .wide.quiet { color: var(--text-3); }
+
+  #chip { flex: none; margin-left: -4px; display: none; align-items: center; gap: 3px; padding: 1px 6px 1px 8px; border-radius: 9px;
+    background: var(--field); color: var(--text-2); font: 600 10.5px/1.4 inherit; }
+  #chip.show { display: flex; }
+  #chip:hover { background: var(--hover); color: var(--text); }
+  #chip.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  #chip .icon { width: 10px; height: 10px; transform: rotate(90deg); }
+  #toggle { flex: none; width: 26px; height: 21px; padding: 0; display: grid; place-items: center; color: var(--text-2); }
+  #toggle.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  #toggle .icon { width: 14px; height: 14px; }
+
+  /* The floating details: every call of the change with its script and error. */
+  #pop { display: none; position: absolute; left: 34px; top: 32px; width: min(620px, calc(100vw - 60px)); max-height: 260px; overflow: auto;
+    padding: 6px 12px 8px; border-radius: 10px; background: var(--page); box-shadow: 0 8px 28px rgba(0,0,0,.25), 0 0 0 .5px var(--border);
+    grid-template-columns: 58px minmax(0, 1fr) 56px; column-gap: 12px; align-items: baseline; font-size: 12px; }
+  body.pop #pop { display: grid; }
+  #pop > .t, #pop > .n, #pop > .d { padding: 4px 0; }
+  #pop .t { grid-column: 1; } #pop .n { grid-column: 2; } #pop .d { grid-column: 3; }
+  #pop pre { grid-column: 2 / 4; margin: 0 0 6px; padding: 6px 8px; border-radius: 6px; background: var(--field); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; -webkit-user-select: text; user-select: text; }
+  #pop pre.err { color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+</style>
+<div id="panel">
+  <div id="line"></div>
+  <div id="strip"></div>
+</div>
+<div id="pop"></div>
+<script src="icons.js"></script>
+<script src="tools.js"></script>
+<script src="status.js"></script>

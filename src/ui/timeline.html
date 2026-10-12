@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Over the page, below the open status line: the screenshot of the timeline change
+     the user chose. Smaller than the page and framed, so it reads as a picture. */
+  html, body { background: color-mix(in srgb, var(--bar) 88%, #000); overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; padding: 14px 24px 22px; gap: 10px; }
+  #caption { flex: none; font-size: 11.5px; color: var(--text-2); }
+  #caption b { font-weight: 600; color: var(--text); }
+  #frame { flex: 1; min-height: 0; width: 100%; display: grid; place-items: center; }
+  #frame img { max-width: 82%; max-height: 100%; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.28), 0 0 0 .5px var(--border); background: #fff; }
+  #frame .none { color: var(--text-3); font-size: 12px; }
+</style>
+<div id="caption"></div>
+<div id="frame"></div>
+<script src="tools.js"></script>
+<script src="timeline.js"></script>

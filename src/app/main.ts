@@ -1,6 +1,6 @@
 // Habitab app: one window with the session list on the left and the real
 // Chromium view of the selected session on the right, DevTools docked.
-import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, screen, shell, WebContentsView } from 'electron';
+import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, screen, shell, WebContentsView } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -18,6 +18,10 @@ const TOPBAR = 46;
 const RBAR = 38;
 /** Space around an emulated page in responsive mode (room for the resize handles). */
 const FRAME_SIDE = 18, FRAME_TOP = 10, FRAME_BOTTOM = 20;
+/** Height of the status line under the top bar (closed); opened, it grows down over the page. */
+const STATUSBAR = 28;
+/** Height of the timeline's thumbnails below the status line (see status.html). */
+const STRIP = 59;
 /** DevTools get at least this width (the settings dialog needs it), the page at least PAGE_MIN. */
 const DEVTOOLS_MIN = 520;
 const PAGE_MIN = 320;
@@ -53,9 +57,24 @@ process.on('uncaughtException', e => reportError('uncaughtException', e));
 process.on('unhandledRejection', e => reportError('unhandledRejection', e));
 
 let win: BaseWindow;
-let sidebar: WebContentsView, topbar: WebContentsView, empty: WebContentsView, responsive: WebContentsView, splitter: WebContentsView, annotator: WebContentsView;
+let sidebar: WebContentsView, topbar: WebContentsView, empty: WebContentsView, responsive: WebContentsView, splitter: WebContentsView, annotator: WebContentsView, status: WebContentsView, problems: WebContentsView, timeline: WebContentsView, link: WebContentsView;
+/** Height the status line needs (it reports it). */
+let statusHeight = STATUSBAR;
 /** Marking mode: the annotator overlay lies over the selected page. */
 let annotating = false;
+/** The problem list (console errors, failed requests of the front tab) lies under the top bar. */
+let problemsOpen = false;
+/** Height the list needs (it reports it), and when it closed by losing focus. */
+let problemsHeight = 120, problemsClosedAt = 0;
+/** Width of the view: the panel and room for its shadow (see problems.html). */
+const PROBLEMS_WIDTH = 480;
+/** The status line is open (the timeline); with an older change chosen, its screenshot lies over the page. */
+let timelineOpen = false, timelinePreview = false;
+/** The change the user chose in the timeline (its first step's id); null: the newest one, live. */
+let timelineStep: number | null = null;
+/** Height of the bubble with the hovered link's URL; it sits at the right edge when the pointer is on the left. */
+const LINK = 24;
+let linkRight = false;
 /** Short message in the top bar, e.g. after copying to the clipboard. */
 let notice: { text: string; until: number } | undefined;
 let manager: SessionManager;
@@ -96,8 +115,11 @@ function layout(): void {
   sidebar.setVisible(SIDEBAR > 0);
   sidebar.setBounds({ x: 0, y: 0, width: Math.max(SIDEBAR, 1), height });
   topbar.setBounds({ x: SIDEBAR, y: 0, width: width - SIDEBAR, height: TOPBAR });
-  const area = { x: SIDEBAR, y: TOPBAR, width: width - SIDEBAR, height: height - TOPBAR };
   const selected = manager.sessions.get(manager.selected ?? '');
+  if (timelineOpen && !selected) timelineOpen = false;
+  // The status line takes the same room in every session, so switching sessions resizes no page.
+  const bar = selected ? STATUSBAR : 0;
+  const area = { x: SIDEBAR, y: TOPBAR + bar, width: width - SIDEBAR, height: height - TOPBAR - bar };
   // All page views stay visible and stacked in the content area; the
   // selected tab is on top. A view that is hidden or removed stops
   // producing frames, and the agent's screenshots would hang.
@@ -143,7 +165,8 @@ function layout(): void {
   empty.setBounds(area);
   empty.setVisible(true);
   order.push(empty);
-  const sel = selected?.active;
+  // A tab whose webContents is gone (the 'destroyed' event is still running) has no view to show.
+  const sel = selected?.active?.view.webContents && !selected.active.view.webContents.isDestroyed() ? selected.active : undefined;
   const selDevtools = !!selected?.devtools && selected.devtoolsTab === sel;
   const selPageWidth = selDevtools ? pageWidthWithDevtools(area.width) : area.width;
   responsive.setVisible(!!sel?.emulation);
@@ -151,16 +174,53 @@ function layout(): void {
   order.push(responsive);
   if (sel) order.push(sel.view);
   if (selDevtools) order.push(selected!.devtools!);
+  // Status line: above the page and DevTools; opened, it grows down over them.
+  // Its view also holds the floating details (taller only while they are open).
+  const sh = Math.min(statusHeight, height - TOPBAR);
+  status.setVisible(!!bar);
+  status.setBounds(bar ? { x: area.x, y: TOPBAR, width: area.width, height: sh } : { x: 0, y: 0, width: 1, height: 1 });
   // The splitter sits on the edge; while dragging it covers the whole area to keep the pointer.
   splitter.setVisible(selDevtools);
   splitter.setBounds(!selDevtools ? { x: 0, y: 0, width: 1, height: 1 } : splitting ? area : { x: area.x + selPageWidth - 3, y: area.y, width: 7, height: area.height });
   order.push(splitter);
-  // Marking mode: the overlay covers exactly the selected page view.
+  // The screenshot of the timeline change the user chose: over the page, below the open status line.
+  timeline.setVisible(timelinePreview);
+  const top = TOPBAR + bar + STRIP;
+  const shotBounds = { x: area.x, y: top, width: area.width, height: Math.max(1, height - top) };
+  timeline.setBounds(timelinePreview ? shotBounds : { x: 0, y: 0, width: 1, height: 1 });
+  order.push(timeline);
+  // Marking mode: the overlay covers exactly the selected page view, or that screenshot.
   if (annotating && !sel) annotating = false;
   annotator.setVisible(annotating);
-  annotator.setBounds(annotating && sel ? sel.view.getBounds() : { x: 0, y: 0, width: 1, height: 1 });
+  annotator.setBounds(annotating && sel ? (timelinePreview ? shotBounds : sel.view.getBounds()) : { x: 0, y: 0, width: 1, height: 1 });
   order.push(annotator);
-  for (const v of order) if (!v.webContents.isDestroyed()) win.contentView.addChildView(v);
+  // Opened, the status line lies over the page, DevTools and that screenshot.
+  order.push(status);
+  // The hovered link's URL, at the bottom of the page. It must not lie under
+  // the pointer, or the page would lose the hover: it goes to the right
+  // instead, or stays hidden.
+  let linkBounds: Electron.Rectangle | undefined;
+  if (sel?.targetUrl && !annotating && !timelinePreview) {
+    const b = sel.view.getBounds();
+    const w = Math.min(b.width, Math.max(240, Math.round(b.width * 0.6)));
+    const left = { x: b.x, y: b.y + b.height - LINK, width: w, height: LINK };
+    const right = { ...left, x: b.x + b.width - w };
+    const cb = win.getContentBounds(), p = screen.getCursorScreenPoint();
+    const c = { x: p.x - cb.x, y: p.y - cb.y };
+    const under = (r: Electron.Rectangle) => c.x >= r.x && c.x < r.x + r.width && c.y >= r.y - 4 && c.y < r.y + r.height;
+    linkBounds = !under(left) ? left : !under(right) ? right : undefined;
+    linkRight = linkBounds === right;
+  }
+  link.setVisible(!!linkBounds);
+  link.setBounds(linkBounds ?? { x: 0, y: 0, width: 1, height: 1 });
+  order.push(link);
+  // The problem list, right-aligned under its button in the top bar.
+  if (problemsOpen && !sel) problemsOpen = false;
+  problems.setVisible(problemsOpen);
+  const pw = Math.min(PROBLEMS_WIDTH, area.width);
+  problems.setBounds(problemsOpen ? { x: area.x + area.width - pw, y: area.y + 2, width: pw, height: Math.min(problemsHeight, area.height - 12) } : { x: 0, y: 0, width: 1, height: 1 });
+  order.push(problems);
+  for (const v of order) if (v.webContents && !v.webContents.isDestroyed()) win.contentView.addChildView(v);
   win.contentView.addChildView(sidebar);
   win.contentView.addChildView(topbar);
   // The resize handles (in the background view) follow the emulated page.
@@ -173,9 +233,10 @@ function publish(): void {
   publishTimer = setTimeout(() => {
     publishTimer = undefined;
     if (quitting || win.isDestroyed()) return;
-    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, notice: notice && notice.until > Date.now() ? notice.text : null };
-    for (const v of [sidebar, topbar, empty, responsive, annotator]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
+    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, problemsOpen, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
+    for (const v of [sidebar, topbar, empty, responsive, annotator, status, problems, timeline, link]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
     updateMenu();
+    manager.saveSoon();
   }, 50);
 }
 
@@ -225,11 +286,51 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     }
     case 'hold': return s && manager.toggleHold(s);
     case 'pin': { const x = manager.sessions.get(args[0]); if (x) { x.pinned = !x.pinned; publish(); } return; }
+    case 'mute': return s && manager.setMuted(s, typeof args[0] === 'boolean' ? args[0] : !s.muted);
+    // Top bar: turn the paused debugger of the front tab on now, or pause it (and keep the project option on).
+    case 'debugger': {
+      if (!s?.active) return;
+      if (s.active.debuggerPaused) return manager.pauseDebugger(s, s.active, false);
+      return manager.setPausesDebugger(s, true);
+    }
     case 'persistentProfile': { const x = manager.sessions.get(args[0]); if (x) { await manager.togglePersistentProfile(x); layout(); publish(); } return; }
     case 'sidebar': return toggleSidebarWidth();
     case 'annotate': return setAnnotating(args[0] ?? !annotating);
     case 'annotateSubmit': return s?.active && annotateSubmit(s, s.active, args[0]);
-    case 'sessionMenu': { const x = manager.sessions.get(args[0]); if (x) sessionMenu(x, args[1], args[2]); return; }
+    // Problem list: open or close (optionally for a session's tab first), send, clear, its height.
+    case 'problems': {
+      if (args[0]) select(args[0], args[1]);
+      const open = typeof args[2] === 'boolean' ? args[2] : !problemsOpen;
+      // A click on the button that just closed the list (by taking focus) does not open it again.
+      if (open && !args[0] && Date.now() - problemsClosedAt < 300) return;
+      return setProblemsOpen(open);
+    }
+    case 'problemsSend': {
+      if (!s?.active) return;
+      const how = manager.sendProblems(s, s.active, args[0]);
+      if (!how) return;
+      if (args[0] === undefined) setProblemsOpen(false);
+      return showNotice(how === 'sent' ? 'Sent to the waiting agent' : how === 'pushed' ? 'Sent to the agent' : 'Kept for the agent’s next feedback call');
+    }
+    case 'problemsClear': { if (s?.active) manager.clearProblems(s.active); return setProblemsOpen(false); }
+    // Timeline: open or close, the large preview, screenshots of steps, open a step's URL.
+    case 'timeline': return setTimelineOpen(typeof args[0] === 'boolean' ? args[0] : !timelineOpen);
+    case 'timelinePreview': { timelineStep = typeof args[0] === 'number' && timelineOpen ? args[0] : null; timelinePreview = timelineStep !== null; layout(); publish(); return; }
+    case 'statusHeight': { const h = Math.max(STATUSBAR, Math.round(args[0])); if (h !== statusHeight) { statusHeight = h; layout(); } return; }
+    case 'timelineImages': {
+      const x = manager.sessions.get(args[0]);
+      if (!x) return {};
+      const ids: number[] = args[1] ?? [];
+      return Object.fromEntries(await Promise.all(ids.map(async id => [id, await manager.stepImage(x, id, !!args[2])])));
+    }
+    case 'timelineOpenUrl': {
+      if (!s?.active || typeof args[0] !== 'string' || !/^https?:|^file:/.test(args[0])) return;
+      manager.userInput(s);
+      setTimelineOpen(false);
+      return s.active.view.webContents.loadURL(args[0]).catch(() => {});
+    }
+    case 'problemsHeight': { problemsHeight = Math.max(60, Math.round(args[0])); return layout(); }
+    case 'sessionMenu': { const x = manager.sessions.get(args[0]); if (x) sessionMenu(x, args[1], args[2], args[3]); return; }
     case 'closeBrowser': { const x = manager.sessions.get(args[0]); if (x) { manager.closeBrowser(x); layout(); } return; }
     case 'remove': { const x = manager.sessions.get(args[0]); if (x) manager.remove(x); return; }
     case 'resetSize': { if (s?.active) { s.active.fixedSize = undefined; layout(); publish(); } return; }
@@ -274,6 +375,55 @@ function setAnnotating(on: boolean): void {
   if (annotating) focusView(annotator);
 }
 
+function setTimelineOpen(on: boolean): void {
+  timelineOpen = on && !!selected();
+  timelinePreview = false;
+  timelineStep = null;
+  layout();
+  publish();
+  if (timelineOpen) focusView(status);
+  else focusView(selected()?.active?.view);
+}
+
+function setProblemsOpen(on: boolean): void {
+  problemsOpen = on && !!selected()?.active;
+  layout();
+  publish();
+  if (problemsOpen) focusView(problems);
+}
+
+/**
+ * Context menu "Send Element to Agent…": the marking overlay opens with the
+ * element under the pointer already marked, so the user only writes a comment.
+ */
+async function sendElement(s: Session, tab: Tab, x: number, y: number): Promise<void> {
+  const wc = tab.view.webContents;
+  // View pixels <-> CSS pixels of the page (zoom, responsive-mode scale).
+  const f = wc.getZoomFactor() * (tab.emulation?.scale ?? 1);
+  let r: Electron.Rectangle | null = null;
+  try {
+    r = await wc.executeJavaScriptInIsolatedWorld(999, [{ code: `(p => {
+      const el = document.elementFromPoint(p.x, p.y);
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return { x: b.x, y: b.y, width: b.width, height: b.height };
+    })(${JSON.stringify({ x: x / f, y: y / f })})` }]);
+  } catch {}
+  const b = tab.view.getBounds();
+  const pad = 3;
+  const rect = r && {
+    x: Math.max(0, Math.round(r.x * f) - pad), y: Math.max(0, Math.round(r.y * f) - pad),
+    width: 0, height: 0,
+  };
+  if (rect && r) {
+    rect.width = Math.min(b.width, Math.round((r.x + r.width) * f) + pad) - rect.x;
+    rect.height = Math.min(b.height, Math.round((r.y + r.height) * f) + pad) - rect.y;
+  }
+  if (selected() !== s || s.active !== tab) select(s.id, tab.id);
+  setAnnotating(true);
+  if (rect && rect.width > 4 && rect.height > 4 && !annotator.webContents.isDestroyed()) annotator.webContents.send('annotate-rect', rect);
+}
+
 function showNotice(text: string): void {
   notice = { text, until: Date.now() + 5000 };
   publish();
@@ -302,6 +452,7 @@ const DESCRIBE_AREA = `(r => {
 
 /** The user marked an area: to the waiting agent, otherwise to the clipboard. */
 async function annotateSubmit(s: Session, tab: Tab, data: { rect: Electron.Rectangle; text: string }): Promise<void> {
+  if (timelinePreview && timelineStep !== null) return annotateScreenshot(s, timelineStep, data);
   setAnnotating(false);
   const wc = tab.view.webContents;
   const r = data.rect;
@@ -317,7 +468,46 @@ async function annotateSubmit(s: Session, tab: Tab, data: { rect: Electron.Recta
     `Marked area (CSS px in the viewport): x ${Math.round(css.x)}, y ${Math.round(css.y)}, ${Math.round(css.width)} × ${Math.round(css.height)}`,
     ...(page.elements.length ? ['Elements in the area:', ...page.elements] : []),
   ].join('\n');
-  const how = manager.submitFeedback(s, { text, comment: data.text, url: wc.getURL(), image: image.isEmpty() ? undefined : image.toPNG().toString('base64') });
+  await deliverFeedback(s, { text, comment: data.text, url: wc.getURL(), image });
+}
+
+/**
+ * The user marked an area of an earlier screenshot (timeline): the area is cut
+ * out of the stored screenshot, and the agent learns that it is about an
+ * earlier state of the page, not the live one. An image has no elements.
+ */
+async function annotateScreenshot(s: Session, stepId: number, data: { rect: Electron.Rectangle; text: string }): Promise<void> {
+  setAnnotating(false);
+  const step = s.timeline.find(x => x.id === stepId);
+  const file = manager.stepShotFile(s, stepId);
+  const full = file ? nativeImage.createFromPath(file) : undefined;
+  if (!step || !full || full.isEmpty()) return showNotice('This screenshot is no longer kept');
+  // Where the screenshot lies in its view; the marked rectangle is in the same coordinates.
+  let box: Electron.Rectangle | null = null;
+  try { box = await timeline.webContents.executeJavaScript(`(() => { const r = document.querySelector('#frame img')?.getBoundingClientRect(); return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null; })()`); } catch {}
+  const size = full.getSize();
+  let crop = { x: 0, y: 0, width: size.width, height: size.height };
+  if (box && box.width > 0 && box.height > 0) {
+    const r = data.rect, k = size.width / box.width;
+    const x1 = Math.max(r.x, box.x), y1 = Math.max(r.y, box.y), x2 = Math.min(r.x + r.width, box.x + box.width), y2 = Math.min(r.y + r.height, box.y + box.height);
+    if (x2 - x1 > 2 && y2 - y1 > 2) crop = { x: Math.round((x1 - box.x) * k), y: Math.round((y1 - box.y) * k), width: Math.round((x2 - x1) * k), height: Math.round((y2 - y1) * k) };
+  }
+  const image = full.crop(crop);
+  const at = new Date(step.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const url = step.url || 'unknown';
+  const text = [
+    data.text ? `The user says: ${data.text}` : 'The user marked an area without a comment.',
+    `This is about an earlier state, not the live page: the screenshot Habitab took after your tool call ${step.tool} at ${at}.`,
+    `Page then: ${url}${step.title ? ` ("${step.title}")` : ''}`,
+    `Marked area (px of the ${size.width} × ${size.height} screenshot): x ${crop.x}, y ${crop.y}, ${crop.width} × ${crop.height}`,
+  ].join('\n');
+  await deliverFeedback(s, { text, comment: data.text, url, image, what: 'marked an area of an earlier screenshot of' });
+}
+
+/** Feedback to the waiting agent, pushed to it, or kept (and copied to the clipboard). */
+async function deliverFeedback(s: Session, f: { text: string; comment: string; url: string; image: Electron.NativeImage; what?: string }): Promise<void> {
+  const { text, image } = f;
+  const how = manager.submitFeedback(s, { text, comment: f.comment, url: f.url, what: f.what, image: image.isEmpty() ? undefined : image.toPNG().toString('base64') });
   if (how === 'sent') return showNotice('Sent to the waiting agent');
   if (how === 'pushed') return showNotice('Sent to Claude Code');
   if (testHidden) lastClipboard = text; // tests must not touch the user's clipboard
@@ -326,8 +516,9 @@ async function annotateSubmit(s: Session, tab: Tab, data: { rect: Electron.Recta
 }
 let lastClipboard = '';
 
-/** Native context menu of a session (x, y: sidebar coordinates = window coordinates). */
-function sessionMenu(s: Session, x: number, y: number): void {
+/** Native menu of a session in the sidebar, from its header or one of its tabs (x, y: window coordinates). */
+function sessionMenu(s: Session, x: number, y: number, tabId?: number): void {
+  const tab = s.tabs.find(t => t.id === tabId);
   const project = s.meta.projectName ?? 'this project';
   const persistent = manager.hasPersistentProfile(s);
   Menu.buildFromTemplate([
@@ -347,9 +538,15 @@ function sessionMenu(s: Session, x: number, y: number): void {
       },
     },
     { label: 'Keep Browser After Session Ends', type: 'checkbox', checked: s.pinned, click: () => { s.pinned = !s.pinned; publish(); } },
+    { label: 'Mute Session', type: 'checkbox', checked: s.muted, click: () => manager.setMuted(s, !s.muted) },
+    {
+      label: 'Pause Debugger While You Test', type: 'checkbox', checked: manager.pausesDebugger(s), enabled: !!manager.projectRoot(s),
+      click: () => manager.setPausesDebugger(s, !manager.pausesDebugger(s)),
+    },
     { type: 'separator' },
     { label: 'Copy Session ID', click: () => clipboard.writeText(s.meta.agentSessionId ?? s.id) },
-    { label: 'Close Browser', enabled: s.tabs.length > 0, click: () => { manager.closeBrowser(s); layout(); } },
+    ...(tab ? [{ label: 'Close Tab', click: () => tab.view.webContents.close() }] : []),
+    { label: 'Close All Tabs of Session', enabled: s.tabs.length > 0, click: () => { manager.closeBrowser(s); layout(); } },
     { label: 'Remove from List', enabled: s.ended, click: () => manager.remove(s) },
   ]).popup({ window: win, x, y });
 }
@@ -450,6 +647,7 @@ function updateMenu(): void {
       { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoom(0) },
       { type: 'separator' },
       { label: 'DevTools', accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I', enabled: !!s?.active, click: () => s && manager.toggleDevtools(s) },
+      { label: 'Timeline', type: 'checkbox', checked: timelineOpen, accelerator: 'CmdOrCtrl+Shift+Y', enabled: !!s, click: () => setTimelineOpen(!timelineOpen) },
       { label: 'Responsive Mode', type: 'checkbox', checked: !!s?.active?.emulation, accelerator: 'CmdOrCtrl+Shift+M', enabled: !!s?.active, click: () => void action('responsive') },
       { label: 'Reset Agent Size', enabled: !!s?.active?.fixedSize, click: () => { if (s?.active) { s.active.fixedSize = undefined; layout(); publish(); } } },
       { role: 'togglefullscreen', label: 'Toggle Full Screen' },
@@ -457,6 +655,7 @@ function updateMenu(): void {
     { label: 'Session', submenu: [
       { label: s?.autoResumeAt ? 'Keep Control' : s?.held ? 'Resume Agent' : 'Take Control', accelerator: 'CmdOrCtrl+Shift+P', enabled: !!s && !s.ended, click: () => s && manager.toggleHold(s) },
       { label: 'Mark Area for Agent…', accelerator: 'CmdOrCtrl+Shift+A', enabled: !!s?.active, click: () => setAnnotating(true) },
+      { label: 'Show Problems', type: 'checkbox', checked: problemsOpen, accelerator: 'CmdOrCtrl+Shift+E', enabled: !!s?.active, click: () => setProblemsOpen(!problemsOpen) },
       { type: 'separator' },
       { label: 'Next Tab', accelerator: 'Ctrl+Tab', click: nextTab(1) },
       { label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', click: nextTab(-1) },
@@ -486,13 +685,19 @@ app.whenReady().then(async () => {
   manager = new SessionManager(win, upstreamUrl);
   manager.onChange = publish;
   manager.onLayout = layout;
-  manager.onThumb = s => { if (!sidebar.webContents.isDestroyed()) sidebar.webContents.send('thumb', s.id, s.thumb ?? null); };
+  manager.onSendElement = (s, t, x, y) => void sendElement(s, t, x, y);
+  manager.onThumb = t => { if (!sidebar.webContents.isDestroyed()) sidebar.webContents.send('thumb', t.id, t.thumb ?? null); };
   empty = uiView('empty.html');
   responsive = uiView('responsive.html');
   splitter = uiView('splitter.html');
   annotator = uiView('annotate.html');
+  status = uiView('status.html');
+  problems = uiView('problems.html');
+  timeline = uiView('timeline.html');
+  link = uiView('link.html');
+  problems.webContents.on('blur', () => { if (problemsOpen) { problemsClosedAt = Date.now(); setProblemsOpen(false); } });
   sidebar = uiView('sidebar.html');
-  sidebar.webContents.on('did-finish-load', () => { for (const s of manager.sessions.values()) if (s.thumb) manager.onThumb(s); });
+  sidebar.webContents.on('did-finish-load', () => { for (const s of manager.sessions.values()) for (const t of s.tabs) if (t.thumb) manager.onThumb(t); });
   topbar = uiView('topbar.html');
   win.on('resize', layout);
   // Switching to another app ends automatic control; no need to wait for the countdown.
@@ -506,6 +711,8 @@ app.whenReady().then(async () => {
     // The window hides; the app keeps serving agents until Cmd+Q.
     if (!quitting && process.platform === 'darwin') { e.preventDefault(); win.hide(); }
   });
+  // Sessions of the last run come back before their launchers reconnect.
+  await manager.restore();
   manager.listen();
   if (testControl) {
     if (testHidden) { win.setOpacity(0); win.setIgnoreMouseEvents(true); }
@@ -513,7 +720,9 @@ app.whenReady().then(async () => {
   }
   layout();
   updateMenu();
-  setInterval(() => manager.idleCheck(), 30_000);
+  // Also saves now and then: cookies change without a state change.
+  setInterval(() => { manager.idleCheck(); manager.saveSoon(); }, 30_000);
+  setInterval(() => manager.cpuCheck(), 3_000);
 
   // Stable launcher for client configurations.
   try {
@@ -523,26 +732,30 @@ app.whenReady().then(async () => {
     const args = app.isPackaged ? [] : [app.getAppPath()];
     fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args }), { mode: 0o600 });
   } catch (e: any) { log(`launcher install failed: ${e.message}`); }
-  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty });
+  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, view: name => ({ sidebar, topbar, timeline, problems, annotator, status } as Record<string, WebContentsView>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
 });
 
 app.on('second-instance', () => { win?.show(); win?.focus(); });
 app.on('activate', () => { win?.show(); });
+/** Set by a signal (e.g. Ctrl+C on `npm start`): quit without asking. */
+let quitBySignal = false;
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { quitBySignal = true; app.quit(); });
 app.on('before-quit', e => {
   if (quitting) return;
   e.preventDefault();
   void (async () => {
     const live = [...manager.sessions.values()].filter(s => !s.ended);
-    if (live.length && !testControl) {
+    if (live.length && !testControl && !quitBySignal) {
       const r = await dialog.showMessageBox({
         type: 'question', buttons: ['Quit', 'Cancel'], defaultId: 1,
         message: `${live.length} session(s) are connected.`,
-        detail: 'Quitting closes their browsers. The agents start Habitab again the next time they use the browser. Only projects with a persistent profile keep their cookies and storage.',
+        detail: 'Habitab opens their tabs again at the next start, and the agents continue. Cookies come back; other storage (localStorage, IndexedDB) only with a persistent profile.',
       });
       if (r.response !== 0) return;
     }
     quitting = true;
+    await manager.save();
     manager.close();
     for (const s of manager.sessions.values()) s.proxy?.close();
     // app.exit() skips Chromium's shutdown, so kept profiles are written first.

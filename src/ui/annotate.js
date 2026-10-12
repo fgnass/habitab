@@ -14,10 +14,10 @@ api.onState(state => {
     b.textContent = 'The agent asks: ';
     $('hintText').append(b, waiting.question || 'Mark an area and say what you mean.');
   } else {
-    $('hintText').textContent = 'Mark an area of the page.';
+    $('hintText').textContent = state.timelinePreview ? 'Mark an area of this earlier screenshot.' : 'Mark an area of the page.';
   }
-  const channel = s?.channel && s.phase !== 'ended' && s.phase !== 'kept';
-  $('target').textContent = waiting ? 'Goes to the waiting agent' : channel ? 'Goes to Claude Code now' : 'Kept for the agent’s next feedback call, and copied';
+  const channel = s?.push && s.phase !== 'ended' && s.phase !== 'kept';
+  $('target').textContent = waiting ? 'Goes to the waiting agent' : channel ? 'Goes to the agent now' : 'Kept for the agent’s next feedback call, and copied';
   $('sendText').textContent = waiting || channel ? 'Send' : 'Save';
 });
 
@@ -54,6 +54,13 @@ document.addEventListener('pointerup', () => {
   start = null;
   // A click without a drag marks the visible page.
   if (!rect || rect.width < 6 || rect.height < 6) rect = { x: 0, y: 0, width: innerWidth, height: innerHeight };
+  showForm();
+});
+
+// Context menu "Send Element to Agent…": the element comes already marked.
+api.onAnnotateRect(r => { start = null; rect = r; showForm(); });
+
+function showForm() {
   draw();
   const form = $('form');
   form.style.display = 'block';
@@ -62,7 +69,7 @@ document.addEventListener('pointerup', () => {
   form.style.left = clamp(rect.x, innerWidth - w - 8) + 'px';
   form.style.top = (below + h < innerHeight ? below : Math.max(8, rect.y - h - 8)) + 'px';
   $('text').focus();
-});
+}
 
 function submit() {
   if (!rect) return;
