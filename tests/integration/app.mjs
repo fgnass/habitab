@@ -250,24 +250,42 @@ const queued = await b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
 check(queued.text.includes('Copy me') && queued.text.includes('call wait_for_user_feedback again') && queued.raw.result.content.some(c => c.type === 'image'),
   'the next feedback call returns kept feedback at once, with the follow-up hint', queued.text.replace(/\n/g, ' | ').slice(0, 160));
 
-// Problems: console errors and failed requests per tab, sent to the agent like feedback
+// Problems: console errors per tab (failed requests as the console reports them), sent to the agent like feedback
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/broken` });
 let tb;
 for (let i = 0; i < 30; i++) { await sleep(100); tb = (await state()).sessions.find(s => s.id === sb.id); if (tb.nav?.problems?.length >= 3) break; }
 const probs = tb.nav?.problems ?? [];
-check(probs.length === 3 && probs.find(p => p.text.includes('Oops twice'))?.count === 2 && probs.some(p => p.text.includes('Boom')) && probs.some(p => p.kind === 'network' && p.source === 'HTTP 500'),
-  'problems: console errors (repeats counted), uncaught exceptions and failed requests are collected', JSON.stringify(probs.map(p => [p.kind, p.text.slice(0, 40), p.source, p.count])));
-check(tb.tabs.find(t => t.active)?.problems?.total === 3, 'problems: the tab has a problem count for its badge');
+check(probs.length === 3 && probs.find(p => p.text.includes('Oops twice'))?.count === 2 && probs.some(p => p.text.includes('Boom')) && probs.some(p => /500/.test(p.text) && p.source?.includes('/api/fail')),
+  'problems: console errors (repeats counted), uncaught exceptions and failed requests as the console reports them', JSON.stringify(probs.map(p => [p.text.slice(0, 40), p.source, p.count])));
+check(tb.tabs.find(t => t.active)?.problems === 3, 'problems: the tab has an error count for its badge');
 const askedP = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
 for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).feedback; i++) await sleep(100);
-await control(`action ${sb.id} problemsSend [${probs.find(p => p.kind === 'network').id}]`);
+await control(`action ${sb.id} problemsSend [${probs.find(p => p.text.includes('Boom')).id}]`);
 const answerP = await askedP;
-check(answerP.text.includes('Failed request') && answerP.text.includes('/api/fail') && answerP.text.includes('not from the user') && !answerP.text.includes('Oops'),
-  'problems: a single problem goes to the waiting agent', answerP.text.replace(/\n/g, ' | ').slice(0, 200));
+check(answerP.text.includes('Console error') && answerP.text.includes('Boom') && answerP.text.includes('not from the user') && !answerP.text.includes('Oops'),
+  'problems: a single error goes to the waiting agent', answerP.text.replace(/\n/g, ' | ').slice(0, 200));
 await control(`action ${sb.id} problemsSend`);
 await sleep(300);
 const queuedP = await b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(queuedP.text.includes('3 problems') && queuedP.text.includes('(2×)') && queuedP.text.includes('Boom'), 'problems: "Send All" is kept for the next feedback call', queuedP.text.replace(/\n/g, ' | ').slice(0, 200));
+check(queuedP.text.includes('3 console errors') && queuedP.text.includes('(2×)') && queuedP.text.includes('Boom'), 'problems: "Send All" is kept for the next feedback call', queuedP.text.replace(/\n/g, ' | ').slice(0, 200));
+
+// The error badge opens the DevTools console; "Send to Agent…" in the DevTools context menu sends the selection
+const uiEval = async (view, js) => { const n = events.length; app.stdin.write(`ui ${view} ${js}\n`); for (let i = 0; i < 50; i++) { await sleep(100); const e = events.slice(n).find(x => x.ui === view); if (e) return e; } };
+await control(`select ${sb.id}`);
+await control(`action ${sb.id} problems`);
+let hooked;
+for (let i = 0; i < 50 && hooked !== 'hooked'; i++) { await sleep(200); hooked = (await uiEval('devtools', 'globalThis.__habitab ? "hooked" : "no"'))?.result; }
+const consoleShown = (await uiEval('devtools', '!!document.querySelector(".console-view")'))?.result;
+check((await state()).sessions.find(s => s.id === sb.id).devtools && hooked === 'hooked' && consoleShown === true,
+  'error badge opens the DevTools on the Console panel, with the Send-to-Agent hook installed', JSON.stringify({ hooked, consoleShown }));
+const askedD = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
+for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).feedback; i++) await sleep(100);
+// The frontend reports the chosen item as a console line (the native menu itself cannot be clicked here).
+await uiEval('devtools', 'console.log("HABITAB_SEND " + JSON.stringify({ text: "Uncaught Error: Boom (from the console)" }))');
+const answerD = await askedD;
+check(answerD.text.includes('selected in the DevTools') && answerD.text.includes('Boom (from the console)') && answerD.text.includes('/broken'),
+  'a DevTools selection goes to the waiting agent with the page URL', answerD.text.replace(/\n/g, ' | ').slice(0, 200));
+await control(`devtools ${sb.id}`);
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 check(!(await state()).sessions.find(s => s.id === sb.id).nav.problems.length, 'problems: a new page starts without problems');
 
@@ -319,7 +337,7 @@ const pushedBefore = d.notifications.length;
 await control(`action ${sd.id} problemsSend`);
 let pEvent;
 for (let i = 0; i < 30 && !pEvent; i++) { await sleep(100); pEvent = d.notifications.slice(pushedBefore).find(n => n.method === 'notifications/claude/channel'); }
-check(pEvent?.params?.content.includes('3 problems') && !pEvent.params.content.includes('Oops') && !pEvent.params.content.includes('Boom'),
+check(pEvent?.params?.content.includes('3 console errors') && !pEvent.params.content.includes('Oops') && !pEvent.params.content.includes('Boom'),
   'problems pushed as channel event without page text', JSON.stringify(pEvent?.params ?? null).slice(0, 200));
 const afterP = await d.tool('wait_for_user_feedback', { timeout_seconds: 30 });
 check(afterP.text.includes('Oops twice'), 'the feedback call after the event returns the problems');

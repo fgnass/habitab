@@ -35,7 +35,7 @@ export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: st
       // Like Cmd+W: closes the active tab without activating another one first.
       else if (cmd === 'closetab' && s?.active) s.active.view.webContents.close();
       else if (cmd === 'remove' && s) m.remove(s);
-      // Runs a script in one of the app's own views (e.g. \`ui timeline <js>\`), for UI checks.
+      // Runs a script in one of the app's own views (e.g. \`ui timeline <js>\`), or in the selected session's DevTools, for UI checks.
       else if (cmd === 'ui') { const v = ui.view(id); if (v) void v.webContents.executeJavaScript([arg, ...rest].join(' ')).then(r => out({ ui: id, result: r }), e => out({ ui: id, error: e.message })); }
       // Like the page context menu's "Send Element to Agent…" at (x, y).
       else if (cmd === 'sendelement' && s?.active) m.onSendElement(s, s.active, Number(arg), Number(rest[0]));

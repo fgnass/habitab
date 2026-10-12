@@ -57,17 +57,11 @@ process.on('uncaughtException', e => reportError('uncaughtException', e));
 process.on('unhandledRejection', e => reportError('unhandledRejection', e));
 
 let win: BaseWindow;
-let sidebar: WebContentsView, topbar: WebContentsView, empty: WebContentsView, responsive: WebContentsView, splitter: WebContentsView, annotator: WebContentsView, status: WebContentsView, problems: WebContentsView, timeline: WebContentsView, link: WebContentsView;
+let sidebar: WebContentsView, topbar: WebContentsView, empty: WebContentsView, responsive: WebContentsView, splitter: WebContentsView, annotator: WebContentsView, status: WebContentsView, timeline: WebContentsView, link: WebContentsView;
 /** Height the status line needs (it reports it). */
 let statusHeight = STATUSBAR;
 /** Marking mode: the annotator overlay lies over the selected page. */
 let annotating = false;
-/** The problem list (console errors, failed requests of the front tab) lies under the top bar. */
-let problemsOpen = false;
-/** Height the list needs (it reports it), and when it closed by losing focus. */
-let problemsHeight = 120, problemsClosedAt = 0;
-/** Width of the view: the panel and room for its shadow (see problems.html). */
-const PROBLEMS_WIDTH = 480;
 /** The status line is open (the timeline); with an older change chosen, its screenshot lies over the page. */
 let timelineOpen = false, timelinePreview = false;
 /** The change the user chose in the timeline (its first step's id); null: the newest one, live. */
@@ -214,12 +208,6 @@ function layout(): void {
   link.setVisible(!!linkBounds);
   link.setBounds(linkBounds ?? { x: 0, y: 0, width: 1, height: 1 });
   order.push(link);
-  // The problem list, right-aligned under its button in the top bar.
-  if (problemsOpen && !sel) problemsOpen = false;
-  problems.setVisible(problemsOpen);
-  const pw = Math.min(PROBLEMS_WIDTH, area.width);
-  problems.setBounds(problemsOpen ? { x: area.x + area.width - pw, y: area.y + 2, width: pw, height: Math.min(problemsHeight, area.height - 12) } : { x: 0, y: 0, width: 1, height: 1 });
-  order.push(problems);
   for (const v of order) if (v.webContents && !v.webContents.isDestroyed()) win.contentView.addChildView(v);
   win.contentView.addChildView(sidebar);
   win.contentView.addChildView(topbar);
@@ -233,8 +221,8 @@ function publish(): void {
   publishTimer = setTimeout(() => {
     publishTimer = undefined;
     if (quitting || win.isDestroyed()) return;
-    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, problemsOpen, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
-    for (const v of [sidebar, topbar, empty, responsive, annotator, status, problems, timeline, link]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
+    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
+    for (const v of [sidebar, topbar, empty, responsive, annotator, status, timeline, link]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
     updateMenu();
     manager.saveSoon();
   }, 50);
@@ -297,22 +285,22 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'sidebar': return toggleSidebarWidth();
     case 'annotate': return setAnnotating(args[0] ?? !annotating);
     case 'annotateSubmit': return s?.active && annotateSubmit(s, s.active, args[0]);
-    // Problem list: open or close (optionally for a session's tab first), send, clear, its height.
+    // Console errors: the badge opens the DevTools console of the tab (optionally another session's tab first);
+    // its context menu sends them to the agent.
     case 'problems': {
       if (args[0]) select(args[0], args[1]);
-      const open = typeof args[2] === 'boolean' ? args[2] : !problemsOpen;
-      // A click on the button that just closed the list (by taking focus) does not open it again.
-      if (open && !args[0] && Date.now() - problemsClosedAt < 300) return;
-      return setProblemsOpen(open);
+      const x = selected();
+      if (x?.active) manager.showConsole(x, x.active);
+      return;
     }
-    case 'problemsSend': {
-      if (!s?.active) return;
-      const how = manager.sendProblems(s, s.active, args[0]);
-      if (!how) return;
-      if (args[0] === undefined) setProblemsOpen(false);
-      return showNotice(how === 'sent' ? 'Sent to the waiting agent' : how === 'pushed' ? 'Sent to the agent' : 'Kept for the agent’s next feedback call');
+    case 'problemsMenu': {
+      const x = args[0] ? manager.sessions.get(args[0]) : selected();
+      const tab = args[1] ? x?.tabs.find(t => t.id === args[1]) : x?.active;
+      if (x && tab) problemsMenu(x, tab, args[2], args[3]);
+      return;
     }
-    case 'problemsClear': { if (s?.active) manager.clearProblems(s.active); return setProblemsOpen(false); }
+    case 'problemsSend': return s?.active && sendProblems(s, s.active, args[0]);
+    case 'problemsClear': { if (s?.active) manager.clearProblems(s.active); return; }
     // Timeline: open or close, the large preview, screenshots of steps, open a step's URL.
     case 'timeline': return setTimelineOpen(typeof args[0] === 'boolean' ? args[0] : !timelineOpen);
     case 'timelinePreview': { timelineStep = typeof args[0] === 'number' && timelineOpen ? args[0] : null; timelinePreview = timelineStep !== null; layout(); publish(); return; }
@@ -329,7 +317,6 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
       setTimelineOpen(false);
       return s.active.view.webContents.loadURL(args[0]).catch(() => {});
     }
-    case 'problemsHeight': { problemsHeight = Math.max(60, Math.round(args[0])); return layout(); }
     case 'sessionMenu': { const x = manager.sessions.get(args[0]); if (x) sessionMenu(x, args[1], args[2], args[3]); return; }
     case 'closeBrowser': { const x = manager.sessions.get(args[0]); if (x) { manager.closeBrowser(x); layout(); } return; }
     case 'remove': { const x = manager.sessions.get(args[0]); if (x) manager.remove(x); return; }
@@ -385,11 +372,23 @@ function setTimelineOpen(on: boolean): void {
   else focusView(selected()?.active?.view);
 }
 
-function setProblemsOpen(on: boolean): void {
-  problemsOpen = on && !!selected()?.active;
-  layout();
-  publish();
-  if (problemsOpen) focusView(problems);
+/** Sends a tab's console errors (all, or the given ones) to the agent and tells the user how. */
+function sendProblems(s: Session, tab: Tab, ids?: number[]): void {
+  const how = manager.sendProblems(s, tab, ids);
+  if (how) showNotice(how === 'sent' ? 'Sent to the waiting agent' : how === 'pushed' ? 'Sent to the agent' : 'Kept for the agent’s next feedback call');
+}
+
+const sendLabel = (n: number) => n === 1 ? 'Send Console Error to Agent' : n > 1 ? `Send ${n} Console Errors to Agent` : 'Send Console Errors to Agent';
+
+/** Context menu of an error badge (sidebar, top bar): send the tab's console errors, open the console, clear. */
+function problemsMenu(s: Session, tab: Tab, x: number, y: number): void {
+  const n = tab.problems.length;
+  Menu.buildFromTemplate([
+    { label: sendLabel(n), enabled: n > 0, click: () => sendProblems(s, tab) },
+    { label: 'Open Console', click: () => { select(s.id, tab.id); manager.showConsole(s, tab); } },
+    { type: 'separator' },
+    { label: 'Clear', enabled: n > 0, click: () => manager.clearProblems(tab) },
+  ]).popup({ window: win, x, y });
 }
 
 /**
@@ -545,6 +544,7 @@ function sessionMenu(s: Session, x: number, y: number, tabId?: number): void {
     },
     { type: 'separator' },
     { label: 'Copy Session ID', click: () => clipboard.writeText(s.meta.agentSessionId ?? s.id) },
+    ...(tab?.problems.length ? [{ label: sendLabel(tab.problems.length), click: () => sendProblems(s, tab) }] : []),
     ...(tab ? [{ label: 'Close Tab', click: () => tab.view.webContents.close() }] : []),
     { label: 'Close All Tabs of Session', enabled: s.tabs.length > 0, click: () => { manager.closeBrowser(s); layout(); } },
     { label: 'Remove from List', enabled: s.ended, click: () => manager.remove(s) },
@@ -655,7 +655,8 @@ function updateMenu(): void {
     { label: 'Session', submenu: [
       { label: s?.autoResumeAt ? 'Keep Control' : s?.held ? 'Resume Agent' : 'Take Control', accelerator: 'CmdOrCtrl+Shift+P', enabled: !!s && !s.ended, click: () => s && manager.toggleHold(s) },
       { label: 'Mark Area for Agent…', accelerator: 'CmdOrCtrl+Shift+A', enabled: !!s?.active, click: () => setAnnotating(true) },
-      { label: 'Show Problems', type: 'checkbox', checked: problemsOpen, accelerator: 'CmdOrCtrl+Shift+E', enabled: !!s?.active, click: () => setProblemsOpen(!problemsOpen) },
+      { label: 'Show Console', accelerator: 'CmdOrCtrl+Shift+E', enabled: !!s?.active, click: () => void action('problems') },
+      { label: sendLabel(s?.active?.problems.length ?? 0), enabled: !!s?.active?.problems.length, click: () => s?.active && sendProblems(s, s.active) },
       { type: 'separator' },
       { label: 'Next Tab', accelerator: 'Ctrl+Tab', click: nextTab(1) },
       { label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', click: nextTab(-1) },
@@ -687,15 +688,14 @@ app.whenReady().then(async () => {
   manager.onLayout = layout;
   manager.onSendElement = (s, t, x, y) => void sendElement(s, t, x, y);
   manager.onThumb = t => { if (!sidebar.webContents.isDestroyed()) sidebar.webContents.send('thumb', t.id, t.thumb ?? null); };
+  manager.onNotice = showNotice;
   empty = uiView('empty.html');
   responsive = uiView('responsive.html');
   splitter = uiView('splitter.html');
   annotator = uiView('annotate.html');
   status = uiView('status.html');
-  problems = uiView('problems.html');
   timeline = uiView('timeline.html');
   link = uiView('link.html');
-  problems.webContents.on('blur', () => { if (problemsOpen) { problemsClosedAt = Date.now(); setProblemsOpen(false); } });
   sidebar = uiView('sidebar.html');
   sidebar.webContents.on('did-finish-load', () => { for (const s of manager.sessions.values()) for (const t of s.tabs) if (t.thumb) manager.onThumb(t); });
   topbar = uiView('topbar.html');
@@ -732,7 +732,7 @@ app.whenReady().then(async () => {
     const args = app.isPackaged ? [] : [app.getAppPath()];
     fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args }), { mode: 0o600 });
   } catch (e: any) { log(`launcher install failed: ${e.message}`); }
-  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, view: name => ({ sidebar, topbar, timeline, problems, annotator, status } as Record<string, WebContentsView>)[name] });
+  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, view: name => ({ sidebar, topbar, timeline, annotator, status, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
 });
 

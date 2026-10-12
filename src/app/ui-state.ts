@@ -1,7 +1,7 @@
 // Serializable snapshot of all sessions for the UI views.
 import { canPush } from '../shared/ipc';
 import { sidebarMode } from './prefs';
-import { isActiveTab, type Problem, type Session, type SessionManager } from './sessions';
+import { isActiveTab, type Session, type SessionManager } from './sessions';
 
 export type Phase = 'connected' | 'tool' | 'idle' | 'disconnected' | 'ended' | 'kept';
 
@@ -21,7 +21,8 @@ export function uiState(m: SessionManager) {
       return {
         id: t.id, title: wc.getTitle(), url, loading: wc.isLoading(), active: t === s.active, inactive: !isActiveTab(s, t), debuggerPaused: !!t.debuggerPaused, busy: !!t.busy,
         isBlank: !url || url === 'about:blank', fixedSize: t.fixedSize ?? null, targetUrl: t.targetUrl ?? '',
-        problems: problemCounts(t.problems),
+        /** Console errors; repeated ones count once per entry. */
+        problems: t.problems.length,
       };
     });
     const awc = s.active?.view.webContents;
@@ -62,17 +63,11 @@ export function uiState(m: SessionManager) {
       browser: !!s.ctx,
       tabs,
       nav: awc ? { url: awc.getURL(), canGoBack: awc.navigationHistory.canGoBack(), canGoForward: awc.navigationHistory.canGoForward(), loading: awc.isLoading(), fixedSize: s.active?.fixedSize ?? null, emulation: s.active?.emulation ?? null, targetUrl: s.active?.targetUrl ?? '', debuggerPaused: !!s.active?.debuggerPaused, busy: !!s.active?.busy, frame: s.active?.emulation ? s.active.frame ?? null : null,
-        // The front tab's problems in full (texts shortened), for the problem list.
+        // The front tab's console errors in full (texts shortened).
         problems: (s.active?.problems ?? []).map(p => ({ ...p, text: p.text.slice(0, 600) })) } : null,
     };
   });
   return { selected: m.selected ?? null, sessions, now: Date.now(), sidebar: sidebarMode() };
-}
-
-/** Problems of a tab by kind; repeated ones count once per entry. */
-function problemCounts(problems: Problem[]) {
-  const console = problems.filter(p => p.kind === 'console').length;
-  return { total: problems.length, console, network: problems.length - console };
 }
 
 export type UiState = ReturnType<typeof uiState>;

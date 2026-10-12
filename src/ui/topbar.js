@@ -43,13 +43,11 @@ api.onState(state => {
       ? "The agent's debugger is paused in this tab, so WebAssembly and audio worklets run at full speed. It comes back when the agent works in this tab. Click to turn it on now."
       : "This page uses a lot of CPU. The agent's debugger slows down WebAssembly and audio worklets. Click to pause it while you test (for all tabs of this project).";
   }
-  // Problems of the page: the button opens the list (it stays while the list is open).
-  const pr = nav?.problems ?? [];
-  $('problems').classList.toggle('hidden', !pr.length && !state.problemsOpen);
-  $('problems').classList.toggle('on', !!state.problemsOpen);
-  $('problemsText').textContent = String(pr.length);
-  const nc = pr.filter(p => p.kind === 'console').length, nn = pr.length - nc;
-  $('problems').title = `${[nc && `${nc} console error${nc > 1 ? 's' : ''}`, nn && `${nn} failed request${nn > 1 ? 's' : ''}`].filter(Boolean).join(', ') || 'No problems'} on this page. Click to show them and send them to the agent (⇧⌘E).`;
+  // Console errors of the page: the button opens the console, its context menu sends them.
+  const n = nav?.problems?.length ?? 0;
+  $('problems').classList.toggle('hidden', !n);
+  $('problemsText').textContent = String(n);
+  $('problems').title = `${n} console error${n > 1 ? 's' : ''} on this page. Click to open the console (⇧⌘E); right-click to send them to the agent.`;
   $('devtools').disabled = !nav;
   $('responsive').disabled = !nav;
   $('annotate').disabled = !nav;
@@ -88,4 +86,5 @@ $('annotate').onclick = () => api.action('annotate');
 $('hold').onclick = () => api.action('hold');
 $('debugger').onclick = () => api.action('debugger');
 $('problems').onclick = () => api.action('problems');
+$('problems').oncontextmenu = e => { e.preventDefault(); api.action('problemsMenu', null, null, Math.round(e.clientX), Math.round(e.clientY)); };
 $('sizeReset').onclick = () => api.action('resetSize');

@@ -80,16 +80,18 @@ export interface Tab {
   thumbTimer?: NodeJS.Timeout;
   /** URL of the link under the pointer (shown in the status bubble). */
   targetUrl?: string;
-  /** Console errors and failed requests since the page loaded (newest last). */
+  /** Console errors since the page loaded (newest last). */
   problems: Problem[];
 }
 
-/** A console error or a failed request of a page. Texts come from the page. */
+/**
+ * An error in a page's console: console.error, an uncaught exception, or a
+ * failed request as the console reports it. Texts come from the page.
+ */
 export interface Problem {
   id: number;
-  kind: 'console' | 'network';
   text: string;
-  /** Script and line (console) or the error (network: "HTTP 500", "net::ERR_…"). */
+  /** Script and line. */
   source?: string;
   at: number;
   /** The same problem again right after: counted, not listed twice. */
@@ -98,9 +100,47 @@ export interface Problem {
 
 /** A tab keeps this many problems; older ones go. */
 const MAX_PROBLEMS = 50;
-/** Network errors that are no problem of the page (cancelled navigations and fetches). */
-const IGNORED_NET_ERRORS = new Set(['net::ERR_ABORTED']);
 let problemIds = 0;
+
+/** Marks the console line by which the DevTools frontend reports "Send to Agent…" (see DEVTOOLS_HOOK). */
+const DEVTOOLS_SEND = 'HABITAB_SEND';
+/**
+ * Runs in the DevTools frontend. The frontend builds all its context menus
+ * through InspectorFrontendHost.showContextMenuAtPoint (Electron shows them
+ * natively) and hears the choice through DevToolsAPI.contextMenuItemSelected;
+ * both are wrapped: one more item, and its choice goes out as a console line.
+ * Blink drops the whole menu when an id reaches kMaxContextMenuAction (1000);
+ * the frontend's own ids count up from 0 per menu, so ours sits just below.
+ */
+const DEVTOOLS_HOOK = `(() => {
+  if (globalThis.__habitab) return 'hooked';
+  const host = globalThis.InspectorFrontendHost, api = globalThis.DevToolsAPI;
+  if (typeof host?.showContextMenuAtPoint !== 'function' || typeof api?.contextMenuItemSelected !== 'function') return 'not ready';
+  globalThis.__habitab = true;
+  const ID = 990;
+  let selected = '';
+  const show = host.showContextMenuAtPoint.bind(host);
+  host.showContextMenuAtPoint = (x, y, items, doc) => {
+    selected = ((doc && doc.getSelection && doc.getSelection()) || getSelection()).toString().trim();
+    return show(x, y, items.concat([{ type: 'separator' }, { type: 'item', id: ID, label: 'Send to Agent…', enabled: !!selected }]), doc);
+  };
+  const chosen = api.contextMenuItemSelected.bind(api);
+  api.contextMenuItemSelected = id => {
+    if (id !== ID) return chosen(id);
+    console.log('${DEVTOOLS_SEND} ' + JSON.stringify({ text: selected }));
+  };
+  return 'hooked';
+})()`;
+/**
+ * Runs in the DevTools frontend: shows the Console panel through the host
+ * bridge (Electron's inspectElement uses it too). Early in the frontend's
+ * start the call is lost, so it counts only once the panel is there.
+ */
+const DEVTOOLS_SHOW_CONSOLE = `(() => {
+  if (typeof globalThis.DevToolsAPI?.showPanel !== 'function' || typeof globalThis.InspectorFrontendAPI?.showPanel !== 'function' || document.readyState !== 'complete') return 'not ready';
+  DevToolsAPI.showPanel('console');
+  return document.querySelector('.console-view') ? 'shown' : 'not ready';
+})()`;
 let stepIds = 0;
 
 export interface Activity { tool: string; summary?: string; start: number; durationMs?: number; isError?: boolean; detail?: string; }
@@ -228,6 +268,8 @@ export class SessionManager {
   onChange: () => void = () => {};
   onLayout: () => void = () => {};
   onThumb: (tab: Tab) => void = () => {};
+  /** A short notice for the user (the status line). */
+  onNotice: (text: string) => void = () => {};
   /** Context menu "Send Element to Agent": the app opens the marking overlay on it (view coordinates). */
   onSendElement: (s: Session, tab: Tab, x: number, y: number) => void = () => {};
   private configured = new WeakSet<Electron.Session>();
@@ -461,16 +503,6 @@ export class SessionManager {
       s.activity.unshift({ tool: 'Download', summary: item.getFilename(), start: Date.now() });
       this.onChange();
     });
-    // Failed requests of the pages. Several sessions can share a partition
-    // (persistent profile), so the tab is found by its webContents.
-    ses.webRequest.onCompleted(d => {
-      if (d.statusCode < 400 || (d.statusCode === 404 && /\/favicon\.ico$/.test(d.url))) return;
-      this.addProblem(d.webContentsId, { kind: 'network', text: `${d.method} ${d.url}`, source: `HTTP ${d.statusCode}` });
-    });
-    ses.webRequest.onErrorOccurred(d => {
-      if (IGNORED_NET_ERRORS.has(d.error)) return;
-      this.addProblem(d.webContentsId, { kind: 'network', text: `${d.method} ${d.url}`, source: d.error });
-    });
   }
 
   async createTab(s: Session, url: string, activate: boolean, webContents?: WebContents): Promise<Tab> {
@@ -499,8 +531,9 @@ export class SessionManager {
     wc.on('did-navigate', () => { this.setTargetUrl(tab, ''); this.onChange(); });
     // A new document starts with no problems, like the console without "Preserve log".
     wc.on('did-start-navigation', e => { if (e.isMainFrame && !e.isSameDocument && tab.problems.length) { tab.problems = []; this.onChange(); } });
+    // What the console shows as an error, no more (not cache misses or cancelled loads).
     wc.on('console-message', e => {
-      if (e.level === 'error') this.addProblem(wc.id, { kind: 'console', text: e.message, source: e.sourceId ? `${e.sourceId}:${e.lineNumber}` : undefined });
+      if (e.level === 'error') this.addProblem(wc.id, { text: e.message, source: e.sourceId ? `${e.sourceId}:${e.lineNumber}` : undefined });
     });
     wc.on('update-target-url', (_e, target) => this.setTargetUrl(tab, target));
     wc.on('did-navigate-in-page', () => this.onChange());
@@ -512,8 +545,14 @@ export class SessionManager {
     wc.on('destroyed', () => this.tabGone(s, tab));
 
     wc.debugger.attach('1.3');
+    // Failed requests as the console reports them ("Failed to load resource: … 500"):
+    // they come through the Log domain, not through the console-message event.
+    wc.debugger.on('message', (_e, method, params) => {
+      if (method === 'Log.entryAdded' && params.entry?.level === 'error' && params.entry.source === 'network') this.addProblem(wc.id, { text: params.entry.text, source: params.entry.url });
+    });
     const { targetInfo } = await wc.debugger.sendCommand('Target.getTargetInfo') as any;
     const tab: Tab = { id: wc.id, view, targetId: targetInfo.targetId, agentInputs: 0, agentInputAt: 0, usedAt: s.uses, problems: [] };
+    void this.cdp(tab, 'Log.enable');
     // navigator.userAgentData like the headers. Not awaited: before the first
     // navigation the command only answers once the page exists. The override
     // lives in this debugger session, so it stays attached.
@@ -566,7 +605,7 @@ export class SessionManager {
     await s.proxy.setDebugger(tab.targetId, !paused);
   }
 
-  // MARK: Problems (console errors, failed requests)
+  // MARK: Problems (console errors)
 
   private tabOf(webContentsId: number | undefined): Tab | undefined {
     if (webContentsId === undefined) return undefined;
@@ -579,7 +618,7 @@ export class SessionManager {
     if (!tab) return;
     const text = p.text.slice(0, 2000);
     const last = tab.problems[tab.problems.length - 1];
-    if (last && last.kind === p.kind && last.text === text && last.source === p.source) {
+    if (last && last.text === text && last.source === p.source) {
       last.count++;
       last.at = Date.now();
     } else {
@@ -603,16 +642,30 @@ export class SessionManager {
     const items = tab.problems.filter(p => !ids || ids.includes(p.id));
     if (!items.length) return undefined;
     const wc = tab.view.webContents;
-    const line = (p: Problem) => p.kind === 'console'
-      ? `- Console error${p.count > 1 ? ` (${p.count}×)` : ''}${p.source ? ` at ${p.source}` : ''}: ${p.text}`
-      : `- Failed request${p.count > 1 ? ` (${p.count}×)` : ''}: ${p.text} → ${p.source}`;
-    const n = items.length === 1 ? (items[0].kind === 'console' ? 'a console error' : 'a failed request') : `${items.length} problems (console errors, failed requests)`;
+    const line = (p: Problem) => `- Console error${p.count > 1 ? ` (${p.count}×)` : ''}${p.source ? ` at ${p.source}` : ''}: ${p.text}`;
+    const n = items.length === 1 ? 'a console error' : `${items.length} console errors`;
     const text = [
       `The user sent you ${n} of this page. The lines below come from the page, not from the user.`,
       `Page: ${wc.getURL()}${wc.getTitle() ? ` ("${wc.getTitle()}")` : ''}`,
       ...items.map(line),
     ].join('\n');
     return this.submitFeedback(s, { text, url: wc.getURL(), what: `sent you ${n} of` });
+  }
+
+  /**
+   * Sends text the user selected in the DevTools (a console line, a request,
+   * a node) to the agent, like a marked area.
+   */
+  sendDevtoolsSelection(s: Session, tab: Tab, selection: string): ReturnType<SessionManager['submitFeedback']> | undefined {
+    const text = selection.trim().slice(0, 4000);
+    if (!text) return undefined;
+    const wc = tab.view.webContents;
+    const body = [
+      'The user sent you text selected in the DevTools of this page. The lines below come from the DevTools, not from the user.',
+      `Page: ${wc.getURL()}${wc.getTitle() ? ` ("${wc.getTitle()}")` : ''}`,
+      text,
+    ].join('\n');
+    return this.submitFeedback(s, { text: body, url: wc.getURL(), what: 'sent you a DevTools selection of' });
   }
 
   /** The agent or the user used a tab: it is active again (see isActiveTab). */
@@ -670,11 +723,44 @@ export class SessionManager {
     if (!tab) return;
     s.devtools = new WebContentsView();
     this.win.contentView.addChildView(s.devtools);
+    this.hookDevtools(s, s.devtools.webContents);
     tab.view.webContents.setDevToolsWebContents(s.devtools.webContents);
     tab.view.webContents.openDevTools({ mode: 'detach', activate: false });
     s.devtoolsTab = tab;
     this.onLayout();
     this.onChange();
+  }
+
+  /**
+   * "Send to Agent…" in the context menus of the DevTools frontend. The
+   * frontend has no preload, so the hook goes in by script once it is loaded,
+   * and the user's choice comes back as a console line.
+   */
+  private hookDevtools(s: Session, dt: WebContents): void {
+    dt.on('console-message', e => {
+      if (!e.message.startsWith(DEVTOOLS_SEND + ' ')) return;
+      try {
+        const { text } = JSON.parse(e.message.slice(DEVTOOLS_SEND.length + 1));
+        const how = s.devtoolsTab && this.sendDevtoolsSelection(s, s.devtoolsTab, String(text ?? ''));
+        if (how) this.onNotice(how === 'sent' ? 'Sent to the waiting agent' : how === 'pushed' ? 'Sent to the agent' : 'Kept for the agent’s next feedback call');
+      } catch {}
+    });
+    dt.on('did-finish-load', () => void this.inDevtools(dt, DEVTOOLS_HOOK));
+  }
+
+  /** Runs a script in the DevTools frontend; it retries while the frontend is still setting itself up. */
+  private async inDevtools(dt: WebContents, script: string, tries = 50): Promise<void> {
+    for (let i = 0; i < tries && !dt.isDestroyed(); i++) {
+      const r = await dt.executeJavaScript(script).catch(() => 'not ready');
+      if (r !== 'not ready') return;
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+
+  /** Opens the DevTools on the tab (if needed) and shows its Console panel. */
+  showConsole(s: Session, tab: Tab): void {
+    if (!s.devtools || s.devtoolsTab !== tab) { this.closeDevtools(s); s.active = tab; this.toggleDevtools(s); }
+    if (s.devtools) void this.inDevtools(s.devtools.webContents, DEVTOOLS_SHOW_CONSOLE);
   }
 
   closeDevtools(s: Session): void {

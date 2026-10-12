@@ -68,12 +68,14 @@ Habitab.app (Electron)
      note that it is an earlier state (after which call, when, which URL)
    • send element: the page's context menu has "Send Element to Agent…"; the
      marking overlay opens with the element under the pointer already marked
-   • problems: console errors (also uncaught exceptions) and failed requests
-     (HTTP ≥ 400, network errors) per tab, repeats counted, cleared by a new
-     document; "3 errors" in the tab's row (thumbnails only: a red count on the
-     thumbnail) and a button in the top bar open the list (⇧⌘E). One problem or all go to the agent like a marked area;
-     the note that wakes the agent has no page text, the tool result marks the
-     lines as page content
+   • console errors (also uncaught exceptions and failed requests, as the
+     console reports them) per tab, repeats counted, cleared by a new document;
+     "3 errors" in the tab's row (thumbnails only: a red count on the thumbnail)
+     and a button in the top bar open the DevTools console (⇧⌘E); their context
+     menu sends the errors to the agent like a marked area. The note that wakes
+     the agent has no page text, the tool result marks the lines as page content
+   • send from the DevTools: "Send to Agent…" in the context menus of the
+     DevTools (console, elements, network) sends the selected text to the agent
    • timeline (⇧⌘Y, in the status line): what the agent did, with screenshots of its tab. A
      screenshot follows each tool call at once (the launcher reports the end
      before the agent gets the answer), and again after 400 ms when no new call
