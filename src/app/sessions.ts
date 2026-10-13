@@ -82,6 +82,8 @@ export interface Tab {
   targetUrl?: string;
   /** Console errors since the page loaded (newest last). */
   problems: Problem[];
+  /** Result of the user's find in page (the find bar shows "2/7"). */
+  find?: { active: number; matches: number };
 }
 
 /**
@@ -104,6 +106,8 @@ let problemIds = 0;
 
 /** Marks the console line by which the DevTools frontend reports "Send to Agent…" (see DEVTOOLS_HOOK). */
 const DEVTOOLS_SEND = 'HABITAB_SEND';
+/** Marks the console line by which the frontend reports that the user cleared the console. */
+const DEVTOOLS_CLEAR = 'HABITAB_CLEAR';
 /**
  * Runs in the DevTools frontend. The frontend builds all its context menus
  * through InspectorFrontendHost.showContextMenuAtPoint (Electron shows them
@@ -129,6 +133,21 @@ const DEVTOOLS_HOOK = `(() => {
     if (id !== ID) return chosen(id);
     console.log('${DEVTOOLS_SEND} ' + JSON.stringify({ text: selected }));
   };
+  // Tell the app when the user clears the console (toolbar, ⌘K, context menu or
+  // the page's console.clear()), so it drops the error badge. Frontend internals
+  // drift between Chromium versions, so every step is guarded and silent on miss.
+  (async () => {
+    try {
+      const SDK = await import('./core/sdk/sdk.js');
+      const Model = SDK.ConsoleModel && SDK.ConsoleModel.ConsoleModel;
+      const Events = (SDK.ConsoleModel && SDK.ConsoleModel.Events) || (Model && Model.Events);
+      const tm = SDK.TargetManager && SDK.TargetManager.TargetManager && SDK.TargetManager.TargetManager.instance();
+      if (!Model || !Events || !Events.ConsoleCleared || !tm) return;
+      const sub = m => { try { m.addEventListener(Events.ConsoleCleared, () => console.log('${DEVTOOLS_CLEAR}')); } catch (e) {} };
+      try { tm.observeModels(Model, { modelAdded: m => sub(m), modelRemoved() {} }); }
+      catch (e) { try { for (const t of tm.targets()) { const m = t.model(Model); if (m) sub(m); } } catch (e2) {} }
+    } catch (e) {}
+  })();
   return 'hooked';
 })()`;
 /**
@@ -270,6 +289,8 @@ export class SessionManager {
   onThumb: (tab: Tab) => void = () => {};
   /** A short notice for the user (the status line). */
   onNotice: (text: string) => void = () => {};
+  /** A page asks for camera/microphone or to read the clipboard and no answer is stored: ask the user (true = allow). */
+  onAccessRequest: (s: Session, kind: SiteAccess, origin: string, types: ('video' | 'audio')[]) => Promise<boolean> = async () => false;
   /** Context menu "Send Element to Agent": the app opens the marking overlay on it (view coordinates). */
   onSendElement: (s: Session, tab: Tab, x: number, y: number) => void = () => {};
   private configured = new WeakSet<Electron.Session>();
@@ -494,9 +515,29 @@ export class SessionManager {
     });
     if (s.launch.proxyServer) void ses.setProxy({ proxyRules: s.launch.proxyServer });
     if (s.launch.acceptInsecureCerts) ses.setCertificateVerifyProc((_req, cb) => cb(0));
-    // Permissions: only harmless ones by default.
+    // Permissions: harmless ones always (writing the clipboard too, as in Chrome);
+    // camera/microphone and reading the clipboard when the user allows them for
+    // the page's origin (asked like Chrome, kept per project).
     const allowed = new Set(['clipboard-sanitized-write', 'fullscreen', 'pointerLock', 'keyboardLock']);
-    ses.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)));
+    const kindOf = (permission: string): SiteAccess | undefined => permission === 'media' ? 'media' : permission === 'clipboard-read' ? 'clipboard' : undefined;
+    ses.setPermissionRequestHandler((_wc, permission, cb, details) => {
+      if (allowed.has(permission)) return cb(true);
+      const kind = kindOf(permission);
+      if (!kind) return cb(false);
+      const d = details as Electron.MediaAccessPermissionRequest;
+      const origin = originOf(d.securityOrigin || d.requestingUrl);
+      const types = kind === 'media' ? (d.mediaTypes ?? []).filter((t): t is 'video' | 'audio' => t === 'video' || t === 'audio') : [];
+      const known = this.siteAccess(s, kind, origin);
+      if (known) return cb(known === 'allow');
+      void this.onAccessRequest(s, kind, origin, types).then(cb, () => cb(false));
+    });
+    // Feature checks (navigator.permissions, device labels) see the same answers.
+    ses.setPermissionCheckHandler((_wc, permission, origin) => {
+      const kind = kindOf(permission);
+      return allowed.has(permission) || (!!kind && this.siteAccess(s, kind, originOf(origin)) === 'allow');
+    });
+    // Pages get what Electron lacks compared to Chrome (the Web Share API, see page-preload.ts).
+    ses.registerPreloadScript({ type: 'frame', id: 'habitab-page', filePath: path.join(__dirname, 'page-preload.js') });
     ses.on('will-download', (_e, item) => {
       const dir = path.join(os.homedir(), 'Downloads');
       item.setSavePath(path.join(dir, item.getFilename()));
@@ -541,6 +582,7 @@ export class SessionManager {
     wc.on('did-start-loading', () => this.onChange());
     wc.on('did-stop-loading', () => { this.onChange(); if (isActiveTab(s, tab)) this.thumbSoon(s, 800, tab); });
     wc.on('context-menu', (_e, params) => this.contextMenu(s, tab, params));
+    wc.on('found-in-page', (_e, r) => { if (r.finalUpdate) { tab.find = { active: r.activeMatchOrdinal, matches: r.matches }; this.onChange(); } });
     wc.on('input-event', (_e, input) => this.pageInput(s, tab, input.type));
     wc.on('destroyed', () => this.tabGone(s, tab));
 
@@ -606,6 +648,12 @@ export class SessionManager {
   }
 
   // MARK: Problems (console errors)
+
+  /** The session and tab of a page's webContents (undefined for Habitab's own views). */
+  pageOf(webContentsId: number): { s: Session; tab: Tab } | undefined {
+    for (const s of this.sessions.values()) for (const tab of s.tabs) if (tab.id === webContentsId) return { s, tab };
+    return undefined;
+  }
 
   private tabOf(webContentsId: number | undefined): Tab | undefined {
     if (webContentsId === undefined) return undefined;
@@ -738,6 +786,8 @@ export class SessionManager {
    */
   private hookDevtools(s: Session, dt: WebContents): void {
     dt.on('console-message', e => {
+      // The user cleared the console: drop the error badge too.
+      if (e.message.startsWith(DEVTOOLS_CLEAR) && s.devtoolsTab?.problems.length) { this.clearProblems(s.devtoolsTab); return; }
       if (!e.message.startsWith(DEVTOOLS_SEND + ' ')) return;
       try {
         const { text } = JSON.parse(e.message.slice(DEVTOOLS_SEND.length + 1));
@@ -825,6 +875,29 @@ export class SessionManager {
     s.muted = muted;
     for (const t of s.tabs) if (!t.view.webContents.isDestroyed()) t.view.webContents.setAudioMuted(muted);
     this.onChange();
+  }
+
+  // MARK: Site permissions (camera/microphone, reading the clipboard; per project and origin)
+
+  /** The stored answer for an origin in the session's project, if any. */
+  siteAccess(s: Session, kind: SiteAccess, origin: string): 'allow' | 'block' | undefined {
+    return (prefs()[ACCESS_PREF[kind]] ?? {})[this.projectRoot(s)]?.[origin];
+  }
+
+  setSiteAccess(s: Session, kind: SiteAccess, origin: string, answer: 'allow' | 'block' | undefined): void {
+    const root = this.projectRoot(s);
+    if (!root) return;
+    const all = { ...(prefs()[ACCESS_PREF[kind]] ?? {}) };
+    const project = { ...(all[root] ?? {}) };
+    if (answer) project[origin] = answer; else delete project[origin];
+    if (Object.keys(project).length) all[root] = project; else delete all[root];
+    setPrefs({ [ACCESS_PREF[kind]]: all });
+    this.onChange();
+  }
+
+  /** Origins with a stored answer of this kind in the session's project. */
+  siteAccessOrigins(s: Session, kind: SiteAccess): Record<string, 'allow' | 'block'> {
+    return (prefs()[ACCESS_PREF[kind]] ?? {})[this.projectRoot(s)] ?? {};
   }
 
   // MARK: Persistent profile (per project)
@@ -1299,6 +1372,15 @@ export class SessionManager {
     );
     Menu.buildFromTemplate(items).popup();
   }
+}
+
+/** What a page may ask the user for. */
+export type SiteAccess = 'media' | 'clipboard';
+const ACCESS_PREF = { media: 'mediaAccess', clipboard: 'clipboardAccess' } as const;
+
+/** "http://localhost:5173" for a URL or origin; the input itself if it is no URL. */
+function originOf(url: string): string {
+  try { return new URL(url).origin; } catch { return url; }
 }
 
 /** Copies all cookies from one partition to another (sessions stay signed in). */

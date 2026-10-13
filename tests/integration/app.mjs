@@ -61,6 +61,9 @@ const page = http.createServer((req, res) => {
   if (req.url === '/broken') return res.end(`<title>Broken</title><h1 id=h>Broken</h1><script>
     console.error('Oops ' + 'twice'); console.error('Oops ' + 'twice'); fetch('/api/fail');
     setTimeout(() => { throw new Error('Boom'); });</script>`);
+  // Web Share: a full-page button shares title, text, a relative URL and a file; the result lands in window.r.
+  if (req.url === '/share') return res.end(`<title>Share</title><script>window.early = typeof navigator.share</script>
+    <button style="position:fixed;inset:0" onclick="navigator.share({ title: 'T', text: 'Hello', url: '/x', files: [new File(['hi'], 'a.txt', { type: 'text/plain' })] }).then(() => window.r = 'resolved', e => window.r = e.name)">Share</button>`);
   if (req.url === '/headers') return res.end(`sent-ua=${req.headers['user-agent']} | sent-ch=${req.headers['sec-ch-ua']}`);
   res.end(`<!doctype html><title>Page ${req.url}</title><h1>${req.url}</h1>
     <button id=p onclick="window.open('/popup','_blank')">Popup</button>
@@ -146,7 +149,7 @@ check(vp === '820x600', 'resize_page sets exact viewport', vp);
 // Status bubble: the hovered link's URL (of that tab; the user sees it on the active tab)
 const alphaTab = async () => (await state()).sessions.find(s => s.id === sa.id).tabs.find(t => t.url.endsWith('/alpha'));
 await a.tool('hover', { pageId: pa2, uid: (await a.tool('take_snapshot', { pageId: pa2 })).text.match(/uid=(\S+) link "Link"/)?.[1] });
-await sleep(300);
+for (let i = 0; i < 30 && (await alphaTab()).targetUrl !== `${base}/linked`; i++) await sleep(100);
 check((await alphaTab()).targetUrl === `${base}/linked`, 'hovered link shows in the status bubble', (await alphaTab()).targetUrl);
 await a.tool('hover', { pageId: pa2, uid: (await a.tool('take_snapshot', { pageId: pa2 })).text.match(/uid=(\S+) heading/)?.[1] });
 await sleep(300);
@@ -269,6 +272,18 @@ await sleep(300);
 const queuedP = await b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
 check(queuedP.text.includes('3 console errors') && queuedP.text.includes('(2×)') && queuedP.text.includes('Boom'), 'problems: "Send All" is kept for the next feedback call', queuedP.text.replace(/\n/g, ' | ').slice(0, 200));
 
+// Find in page: the query shows in the bar; matches are counted on a focused page
+await control(`select ${sb.id}`);
+await control(`action ${sb.id} findText {"text": "Broken", "forward": true}`);
+let found;
+for (let i = 0; i < 30 && !found; i++) { await sleep(100); found = (await state()).sessions.find(s => s.id === sb.id).nav?.find; }
+check((await state()).findText === 'Broken', 'find in page: the query shows in the find bar');
+// The count only comes back when the window is frontmost (findInPage needs a focused page); assert it only then.
+if (process.env.HABITAB_TEST_VISIBLE === '1' && found) check(found.matches === 1 && found.active === 1, 'find in page: matches are counted', JSON.stringify(found));
+await control(`action ${sb.id} findClose`);
+await sleep(200);
+check((await state()).findText === null && !(await state()).sessions.find(s => s.id === sb.id).nav?.find, 'find in page: closing clears the search');
+
 // The error badge opens the DevTools console; "Send to Agent…" in the DevTools context menu sends the selection
 const uiEval = async (view, js) => { const n = events.length; app.stdin.write(`ui ${view} ${js}\n`); for (let i = 0; i < 50; i++) { await sleep(100); const e = events.slice(n).find(x => x.ui === view); if (e) return e; } };
 await control(`select ${sb.id}`);
@@ -285,9 +300,36 @@ await uiEval('devtools', 'console.log("HABITAB_SEND " + JSON.stringify({ text: "
 const answerD = await askedD;
 check(answerD.text.includes('selected in the DevTools') && answerD.text.includes('Boom (from the console)') && answerD.text.includes('/broken'),
   'a DevTools selection goes to the waiting agent with the page URL', answerD.text.replace(/\n/g, ' | ').slice(0, 200));
+// Camera/microphone: without a stored answer the user is asked; tests show no sheet, so the request is denied at once
+const gum = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => navigator.mediaDevices.getUserMedia({ video: true }).then(() => "granted", e => e.name)' });
+check(gum.text.includes('NotAllowedError'), 'camera: a request without an answer is denied in tests (no sheet, no hang)', gum.text.replace(/\n/g, ' | ').slice(0, 160));
+
+// Reading the clipboard asks the user like camera access; tests show no sheet, so it is denied at once
+const clip = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => navigator.permissions.query({ name: "clipboard-read" }).then(s => s.state)' });
+check(clip.text.includes('"prompt"') || clip.text.includes('"denied"'), 'clipboard: reading is not granted without an answer', clip.text.replace(/\n/g, ' | ').slice(0, 160));
+
+// Clearing the console (here the page calls console.clear()) drops the error badge too
+check((await state()).sessions.find(s => s.id === sb.id).tabs.find(t => t.active)?.problems === 3, 'problems: badge shows 3 before the console is cleared');
+await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => { console.clear(); return 1; }' });
+let cleared = false;
+for (let i = 0; i < 40 && !cleared; i++) { await sleep(100); cleared = (await state()).sessions.find(s => s.id === sb.id).tabs.find(t => t.active)?.problems === 0; }
+check(cleared, 'problems: clearing the console drops the error badge');
 await control(`devtools ${sb.id}`);
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 check(!(await state()).sessions.find(s => s.id === sb.id).nav.problems.length, 'problems: a new page starts without problems');
+
+// Web Share API: Electron lacks it; Habitab adds navigator.share before page scripts and receives the data (no menu in tests)
+await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/share` });
+await control(`select ${sb.id}`);
+const shareDetect = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => [window.early, typeof navigator.canShare, navigator.canShare({ url: "/y" }), navigator.canShare({})].join(",")' });
+check(shareDetect.text.includes('function,function,true,false'), 'web share: navigator.share exists before page scripts, canShare validates', shareDetect.text.replace(/\n/g, ' | ').slice(0, 160));
+await control(`userclick ${sb.id}`);
+let shared;
+for (let i = 0; i < 30 && !shared; i++) { await sleep(100); shared = (await state()).lastShare; }
+const shareResult = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => window.r' });
+check(shared?.title === 'T' && shared.text === 'Hello' && shared.url === `${base}/x` && shared.files?.[0] === 'a.txt' && shareResult.text.includes('AbortError'),
+  'web share: a click shares title, text, absolute URL and files; the page gets the result', JSON.stringify(shared) + ' ' + shareResult.text.replace(/\n/g, ' ').slice(-40));
+await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 
 // Timeline: each tool call with a screenshot of the agent's tab; unchanged pages share one
 await control(`select ${sb.id}`);

@@ -25,7 +25,12 @@
       "category": "public.app-category.developer-tools",
       "target": "dir",
       "icon": "build/icon.icns",
-      "identity": null
+      "identity": null,
+      "extendInfo": {
+        "NSCameraUsageDescription": "Pages you test in Habitab can use the camera when you allow it.",
+        "NSMicrophoneUsageDescription": "Pages you test in Habitab can use the microphone when you allow it.",
+        "NSLocalNetworkUsageDescription": "Pages you test in Habitab can reach devices and servers on your local network."
+      }
     },
     "linux": {
       "target": "AppImage",

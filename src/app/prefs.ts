@@ -16,6 +16,12 @@ export interface Prefs {
   persistentProfiles?: string[];
   /** Project roots where the agent's debugger pauses while the user tests a tab. */
   pauseDebugger?: string[];
+  /** Camera and microphone, per project root and origin: the user's answer to the page's request. */
+  mediaAccess?: Record<string, Record<string, 'allow' | 'block'>>;
+  /** Reading the clipboard, per project root and origin (writing is always allowed, as in Chrome). */
+  clipboardAccess?: Record<string, Record<string, 'allow' | 'block'>>;
+  /** http origins (with port) that Chromium treats as secure, e.g. a dev host on 127.0.0.1. Applied at app start. */
+  secureOrigins?: string[];
 }
 
 let cache: Prefs | undefined;

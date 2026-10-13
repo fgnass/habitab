@@ -41,7 +41,8 @@ Habitab.app (Electron)
    • persistent profile per project (optional): cookies, localStorage, IndexedDB,
      service workers and cache are stored on disk and survive app restarts; one
      live session uses the profile, parallel ones start with a copy of its cookies
-   • docked DevTools (resizable), address bar, mute a whole session (its menu)
+   • docked DevTools (resizable), address bar, find in page (⌘F, ⌘G/⇧⌘G),
+     mute a whole session (its menu)
    • status line under the top bar, always there (the same height in every
      session): the agent's current or last tool call (time, name, duration),
      short notices. Its one button (⇧⌘Y) opens the timeline downwards over the
@@ -226,8 +227,25 @@ launcher crash, app restart.
 - Chromium of the Electron version (currently 152), a few weeks behind Chrome.
 - No Chrome Sync, no Chrome extensions.
 - New windows from `window.open` become tabs of the session.
-- Downloads go to `~/Downloads`. Permissions (camera, location, notifications)
-  are denied by default.
+- Downloads go to `~/Downloads`. Camera, microphone and reading the clipboard:
+  a page's request asks you (Allow / Block, kept per project and origin; Site
+  Permissions in the session menu forgets an answer). Writing the clipboard is
+  allowed, as in Chrome. Other permissions (location, notifications) are denied.
+- Web Share: Electron has no `navigator.share`; Habitab adds `share()` and
+  `canShare()` to the pages (macOS) and opens the native share menu. The menu
+  does not report whether you shared, so the promise resolves when it closes
+  (Chrome rejects a cancel with `AbortError`).
+- Plain http under an own host name (e.g. `app.test` → 127.0.0.1) is no secure
+  context, so camera, clipboard & co. are missing. The session menu offers
+  "Treat http://app.test:5173 as Secure…" (Chromium's
+  `--unsafely-treat-insecure-origin-as-secure`; exact origin with port, applied
+  after a restart). `localhost`, `127.0.0.1` and `*.localhost` are secure anyway.
+- Local network: Chromium's own prompt (Local Network Access) is off in
+  Electron, so pages reach LAN addresses without asking. macOS still asks once
+  per app (localhost is exempt). The permission is tied to the code signature:
+  after a rebuild of the ad-hoc signed app, LAN requests may fail with "No route
+  to host" and no dialog; turn Habitab off and on again in System Settings →
+  Privacy & Security → Local Network.
 - Linux/Windows: prepared, not tested. App ad-hoc signed, not notarized.
 
 The earlier Swift version (headless + screencast) is in `archive/swift-headless/`.

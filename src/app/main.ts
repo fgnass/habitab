@@ -1,13 +1,13 @@
 // Habitab app: one window with the session list on the left and the real
 // Chromium view of the selected session on the right, DevTools docked.
-import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, screen, shell, WebContentsView } from 'electron';
+import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, screen, ShareMenu, shell, systemPreferences, WebContentsView } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { ensureHome, log, openLog, paths } from '../shared/paths';
 import { installLauncher } from '../installer/installer';
 import { prefs, setPrefs, SidebarMode, sidebarMode } from './prefs';
-import { Session, SessionManager, Tab } from './sessions';
+import { Session, SessionManager, SiteAccess, Tab } from './sessions';
 import { uiState } from './ui-state';
 
 /** Sidebar widths: thumbnails with titles, thumbnails only (room for the window buttons), none. */
@@ -33,6 +33,8 @@ openLog('app');
 app.setPath('userData', paths.chromium);
 app.commandLine.appendSwitch('remote-debugging-port', '0');
 app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+// http dev origins the user marked as secure (session menu); Chromium reads them only here.
+if (prefs().secureOrigins?.length) app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', prefs().secureOrigins!.join(','));
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -57,11 +59,16 @@ process.on('uncaughtException', e => reportError('uncaughtException', e));
 process.on('unhandledRejection', e => reportError('unhandledRejection', e));
 
 let win: BaseWindow;
-let sidebar: WebContentsView, topbar: WebContentsView, empty: WebContentsView, responsive: WebContentsView, splitter: WebContentsView, annotator: WebContentsView, status: WebContentsView, timeline: WebContentsView, link: WebContentsView;
+let sidebar: WebContentsView, topbar: WebContentsView, empty: WebContentsView, responsive: WebContentsView, splitter: WebContentsView, annotator: WebContentsView, status: WebContentsView, timeline: WebContentsView, link: WebContentsView, find: WebContentsView;
 /** Height the status line needs (it reports it). */
 let statusHeight = STATUSBAR;
 /** Marking mode: the annotator overlay lies over the selected page. */
 let annotating = false;
+/** Find in page: the bar lies at the top right of the selected page; the running query, its tab and the key hook. */
+let findOpen = false, findText = '';
+let findTab: Tab | undefined;
+let findKeyHandler: ((e: Electron.Event, input: Electron.Input) => void) | undefined;
+const FIND_W = 340, FIND_H = 40;
 /** The status line is open (the timeline); with an older change chosen, its screenshot lies over the page. */
 let timelineOpen = false, timelinePreview = false;
 /** The change the user chose in the timeline (its first step's id); null: the newest one, live. */
@@ -208,6 +215,14 @@ function layout(): void {
   link.setVisible(!!linkBounds);
   link.setBounds(linkBounds ?? { x: 0, y: 0, width: 1, height: 1 });
   order.push(link);
+  // The find bar, at the top right of the selected page (over it, under the status line).
+  if (findOpen && !sel) findOpen = false;
+  find.setVisible(findOpen);
+  if (findOpen && sel) {
+    const b = sel.view.getBounds();
+    find.setBounds({ x: b.x + b.width - Math.min(FIND_W, b.width) - 12, y: b.y + 8, width: Math.min(FIND_W, b.width), height: FIND_H });
+  } else find.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+  order.push(find);
   for (const v of order) if (v.webContents && !v.webContents.isDestroyed()) win.contentView.addChildView(v);
   win.contentView.addChildView(sidebar);
   win.contentView.addChildView(topbar);
@@ -221,8 +236,8 @@ function publish(): void {
   publishTimer = setTimeout(() => {
     publishTimer = undefined;
     if (quitting || win.isDestroyed()) return;
-    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
-    for (const v of [sidebar, topbar, empty, responsive, annotator, status, timeline, link]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
+    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, findText: findOpen ? findText : null, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
+    for (const v of [sidebar, topbar, empty, responsive, annotator, status, timeline, link, find]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
     updateMenu();
     manager.saveSoon();
   }, 50);
@@ -233,6 +248,7 @@ function selected(): Session | undefined { return manager.sessions.get(manager.s
 function select(id: string, tabId?: number): void {
   const s = manager.sessions.get(id);
   if (!s) return;
+  if (findOpen && (id !== manager.selected || (tabId !== undefined && tabId !== s.active?.id))) closeFind();
   manager.selected = id;
   if (tabId !== undefined) { s.active = s.tabs.find(t => t.id === tabId) ?? s.active; manager.thumbSoon(s, 300); }
   if (s.devtools && s.devtoolsTab !== s.active) { manager.closeDevtools(s); manager.toggleDevtools(s); }
@@ -284,6 +300,16 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'persistentProfile': { const x = manager.sessions.get(args[0]); if (x) { await manager.togglePersistentProfile(x); layout(); publish(); } return; }
     case 'sidebar': return toggleSidebarWidth();
     case 'annotate': return setAnnotating(args[0] ?? !annotating);
+    // Find in page: open the bar (keys come from the page), step, close. findText is for programmatic use (tests).
+    case 'find': return s?.active && openFind(s.active);
+    case 'findText': {
+      if (!findTab && s?.active) openFind(s.active);
+      const a = args[0] ?? {};
+      if (typeof a.text === 'string') findText = a.text;
+      return runFind({ forward: a.forward ?? true, next: a.next });
+    }
+    case 'findStep': return void (findTab && runFind({ forward: args[0] !== false, next: true }));
+    case 'findClose': return closeFind();
     case 'annotateSubmit': return s?.active && annotateSubmit(s, s.active, args[0]);
     // Console errors: the badge opens the DevTools console of the tab (optionally another session's tab first);
     // its context menu sends them to the agent.
@@ -370,6 +396,131 @@ function setTimelineOpen(on: boolean): void {
   publish();
   if (timelineOpen) focusView(status);
   else focusView(selected()?.active?.view);
+}
+
+/**
+ * ⌘F: a find bar over the page. The page keeps keyboard focus — Chromium only
+ * runs a find for a focused page — so the bar is display-only and the keys are
+ * read from the page through before-input-event while the bar is open.
+ */
+function openFind(tab: Tab): void {
+  if (findOpen && findTab !== tab) closeFind();
+  findTab = tab;
+  findOpen = true;
+  const wc = tab.view.webContents;
+  wc.focus();
+  if (!findKeyHandler) { findKeyHandler = (_e, input) => onFindKey(input, _e); wc.on('before-input-event', findKeyHandler); }
+  // Prefill from the page's selection (like Chrome).
+  void wc.executeJavaScript('String(getSelection()).trim()', true).then(sel => {
+    if (findOpen && findTab === tab && typeof sel === 'string' && sel && sel.length < 200) { findText = sel; runFind({ forward: true }); }
+  }).catch(() => {});
+  layout();
+  publish();
+}
+
+/** A key while the find bar is open: type into the query, step, or close. */
+function onFindKey(input: Electron.Input, e: Electron.Event): void {
+  if (!findOpen || input.type !== 'keyDown') return;
+  if (input.key === 'Escape') { e.preventDefault(); closeFind(); return; }
+  if (input.key === 'Enter') { e.preventDefault(); runFind({ forward: !input.shift, next: true }); return; }
+  if (input.key === 'Backspace') { e.preventDefault(); findText = findText.slice(0, -1); runFind({ forward: true }); return; }
+  // A single printable character, no command/control/alt (⌘G, ⌘C, … pass through).
+  if (input.key.length === 1 && !input.meta && !input.control && !input.alt) { e.preventDefault(); findText += input.key; runFind({ forward: true }); }
+}
+
+/** Runs the current query on the find tab; stepping with `next`. */
+function runFind(f: { forward?: boolean; next?: boolean }): void {
+  const wc = findTab?.view.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  if (!findText) { if (findTab) findTab.find = undefined; wc.stopFindInPage('clearSelection'); publish(); return; }
+  wc.focus();
+  wc.findInPage(findText, { findNext: !!f.next, forward: f.forward ?? true });
+}
+
+function closeFind(): void {
+  if (!findOpen) return;
+  findOpen = false;
+  findText = '';
+  const tab = findTab;
+  findTab = undefined;
+  if (tab && !tab.view.webContents.isDestroyed()) {
+    if (findKeyHandler) tab.view.webContents.removeListener('before-input-event', findKeyHandler);
+    tab.find = undefined;
+    tab.view.webContents.stopFindInPage('keepSelection');
+  }
+  findKeyHandler = undefined;
+  layout();
+  publish();
+}
+
+/**
+ * A page asks for camera/microphone or to read the clipboard: the user answers
+ * in a sheet, and the answer is kept for the origin in this project (unless
+ * unticked). A camera/microphone allow also asks macOS once to let Habitab
+ * itself use the device.
+ */
+async function askSiteAccess(s: Session, kind: SiteAccess, origin: string, types: ('video' | 'audio')[]): Promise<boolean> {
+  // Tests never show a sheet; they answer through the stored preference.
+  if (testHidden) return false;
+  const what = kind === 'clipboard' ? 'see text and images you copied to the clipboard'
+    : `use your ${types.includes('video') && types.includes('audio') ? 'camera and microphone' : types.includes('audio') ? 'microphone' : 'camera'}`;
+  const project = s.meta.projectName ?? 'this project';
+  const r = await dialog.showMessageBox(win, {
+    type: 'question', buttons: ['Allow', 'Block'], defaultId: 0, cancelId: 1,
+    message: `${origin} wants to ${what}`,
+    detail: `Asked by a page in “${project}”.${s.meta.client ? ` The agent (${s.meta.clientName ?? s.meta.client}) may be using this tab.` : ''}`,
+    checkboxLabel: `Remember for ${origin} in “${project}”`, checkboxChecked: true,
+  });
+  const allow = r.response === 0;
+  if (r.checkboxChecked) manager.setSiteAccess(s, kind, origin, allow ? 'allow' : 'block');
+  if (!allow || kind !== 'media' || process.platform !== 'darwin') return allow;
+  for (const t of types) {
+    const device = t === 'video' ? 'camera' : 'microphone';
+    if (systemPreferences.getMediaAccessStatus(device) === 'granted') continue;
+    if (!(await systemPreferences.askForMediaAccess(device))) {
+      showNotice(`macOS does not let Habitab use the ${device}: System Settings → Privacy & Security → ${device === 'camera' ? 'Camera' : 'Microphone'}`);
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Shared files may be large; Chrome refuses big shares too. */
+const SHARE_MAX_BYTES = 50 * 1024 * 1024;
+/** The last share request (for tests, which show no menu). */
+let lastShare: { title?: string; text?: string; url?: string; files?: string[] } | null = null;
+
+/**
+ * navigator.share() of a page (see page-preload.ts): the macOS share menu at
+ * the pointer with the text, URL and files. The menu does not tell whether
+ * the user shared, so closing it counts as done ("ok").
+ */
+async function sharePage(senderId: number, json: string): Promise<string> {
+  const page = manager.pageOf(senderId);
+  if (!page) return 'AbortError';
+  let d: { title?: string; text?: string; url?: string; files?: { name: string; type: string; data: string }[] };
+  try { d = JSON.parse(json); } catch { return 'DataError'; }
+  const size = (d.files ?? []).reduce((n, f) => n + f.data.length * 0.75, 0);
+  if (size > SHARE_MAX_BYTES) return 'DataError';
+  lastShare = { title: d.title, text: d.text, url: d.url, files: d.files?.map(f => f.name) };
+  if (testHidden || process.platform !== 'darwin') return 'AbortError';
+  // Files go to a private temp folder the share services can read; it goes away later.
+  let dir: string | undefined;
+  const filePaths: string[] = [];
+  if (d.files?.length) {
+    dir = await fs.promises.mkdtemp(path.join(app.getPath('temp'), 'habitab-share-'));
+    for (const [i, f] of d.files.entries()) {
+      const name = path.basename(f.name || `file-${i + 1}`).replace(/[/\\:]/g, '_') || `file-${i + 1}`;
+      const file = path.join(dir, filePaths.some(p => path.basename(p) === name) ? `${i + 1}-${name}` : name);
+      await fs.promises.writeFile(file, Buffer.from(f.data, 'base64'), { mode: 0o600 });
+      filePaths.push(file);
+    }
+  }
+  const texts = [d.text ?? (d.url ? undefined : d.title)].filter((t): t is string => !!t);
+  const urls = d.url ? [d.url] : [];
+  await new Promise<void>(resolve => new ShareMenu({ texts, urls, filePaths }).popup({ window: win, callback: () => resolve() }));
+  if (dir) setTimeout(() => void fs.promises.rm(dir!, { recursive: true, force: true }), 10 * 60_000).unref();
+  return 'ok';
 }
 
 /** Sends a tab's console errors (all, or the given ones) to the agent and tells the user how. */
@@ -538,6 +689,11 @@ function sessionMenu(s: Session, x: number, y: number, tabId?: number): void {
     },
     { label: 'Keep Browser After Session Ends', type: 'checkbox', checked: s.pinned, click: () => { s.pinned = !s.pinned; publish(); } },
     { label: 'Mute Session', type: 'checkbox', checked: s.muted, click: () => manager.setMuted(s, !s.muted) },
+    // Stored answers of the project (camera/microphone, clipboard), one per origin; a click forgets it (the page asks again).
+    ...(sitePermissionItems(s).length ? [{ label: 'Site Permissions', submenu: sitePermissionItems(s) }] : []),
+    // A dev server on plain http under its own host name (e.g. app.test → 127.0.0.1) is no secure
+    // context, so camera, clipboard & co. are missing. Chromium can treat such an origin as secure.
+    ...secureOriginItems(tab ?? s.active),
     {
       label: 'Pause Debugger While You Test', type: 'checkbox', checked: manager.pausesDebugger(s), enabled: !!manager.projectRoot(s),
       click: () => manager.setPausesDebugger(s, !manager.pausesDebugger(s)),
@@ -549,6 +705,48 @@ function sessionMenu(s: Session, x: number, y: number, tabId?: number): void {
     { label: 'Close All Tabs of Session', enabled: s.tabs.length > 0, click: () => { manager.closeBrowser(s); layout(); } },
     { label: 'Remove from List', enabled: s.ended, click: () => manager.remove(s) },
   ]).popup({ window: win, x, y });
+}
+
+function sitePermissionItems(s: Session): Electron.MenuItemConstructorOptions[] {
+  const name = { media: 'Camera & Microphone', clipboard: 'Clipboard' } as const;
+  return (['media', 'clipboard'] as const).flatMap(kind => Object.entries(manager.siteAccessOrigins(s, kind)).map(([origin, answer]) => ({
+    label: `${name[kind]} ${answer === 'allow' ? 'allowed' : 'blocked'}: ${origin} — Forget`, click: () => manager.setSiteAccess(s, kind, origin, undefined),
+  })));
+}
+
+/** The tab's origin if it is plain http and not secure by itself (localhost, 127.0.0.1, ::1 and *.localhost are). */
+function insecureOrigin(tab: Tab | undefined): string | undefined {
+  try {
+    const u = new URL(tab?.view.webContents.getURL() ?? '');
+    if (u.protocol !== 'http:') return undefined;
+    const h = u.hostname;
+    if (h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(h)) return undefined;
+    return u.origin;
+  } catch { return undefined; }
+}
+
+/** "Treat … as Secure" for the tab's insecure http origin, or "Stop Treating …" for one already listed. */
+function secureOriginItems(tab: Tab | undefined): Electron.MenuItemConstructorOptions[] {
+  const list = prefs().secureOrigins ?? [];
+  const origin = insecureOrigin(tab);
+  const items: Electron.MenuItemConstructorOptions[] = [];
+  if (origin && !list.includes(origin)) items.push({ label: `Treat ${origin} as Secure…`, click: () => void changeSecureOrigins([...list, origin], `${origin} is treated as a secure context (camera, clipboard and other APIs that need https).`) });
+  for (const o of list) items.push({ label: `Stop Treating ${o} as Secure…`, click: () => void changeSecureOrigins(list.filter(x => x !== o), `${o} is a normal http origin again.`) });
+  return items;
+}
+
+/** Stores the list (Chromium reads it only at start) and offers the restart; sessions and tabs come back. */
+async function changeSecureOrigins(list: string[], what: string): Promise<void> {
+  setPrefs({ secureOrigins: list });
+  const r = await dialog.showMessageBox(win, {
+    type: 'question', buttons: ['Restart Now', 'Later'], defaultId: 0, cancelId: 1,
+    message: 'Restart Habitab to apply the change?',
+    detail: `${what} Chromium reads this setting only when it starts. Sessions and their tabs come back after the restart, and the agents reconnect.`,
+  });
+  if (r.response !== 0) return;
+  restarting = true;
+  app.relaunch();
+  app.quit();
 }
 
 /** Button and ⌘\: full width ↔ thumbnails only. A hidden sidebar comes back first. */
@@ -592,6 +790,7 @@ function installer(op: string, ids?: string[]): Promise<any> {
 }
 
 ipcMain.handle('setup', (_e, op: string, ids?: string[]) => installer(op, ids));
+ipcMain.handle('habitab:share', (e, json: string) => sharePage(e.sender.id, json));
 
 function openSetup(): void {
   if (setupWindow && !setupWindow.isDestroyed()) { setupWindow.show(); setupWindow.focus(); return; }
@@ -631,7 +830,10 @@ function updateMenu(): void {
     { label: 'Edit', submenu: [
       { role: 'undo', label: 'Undo' }, { role: 'redo', label: 'Redo' }, { type: 'separator' },
       { role: 'cut', label: 'Cut' }, { role: 'copy', label: 'Copy' }, { role: 'paste', label: 'Paste' },
-      { role: 'selectAll', label: 'Select All' },
+      { role: 'selectAll', label: 'Select All' }, { type: 'separator' },
+      { label: 'Find…', accelerator: 'CmdOrCtrl+F', enabled: !!s?.active, click: () => void action('find') },
+      { label: 'Find Next', accelerator: 'CmdOrCtrl+G', enabled: findOpen && !!findText, click: () => runFind({ forward: true, next: true }) },
+      { label: 'Find Previous', accelerator: 'CmdOrCtrl+Shift+G', enabled: findOpen && !!findText, click: () => runFind({ forward: false, next: true }) },
     ] },
     { label: 'View', submenu: [
       { label: 'Show Sidebar', type: 'checkbox', checked: !prefs().sidebarHidden, accelerator: isMac ? 'Ctrl+Cmd+S' : 'Ctrl+Shift+S', click: toggleSidebarHidden },
@@ -689,6 +891,7 @@ app.whenReady().then(async () => {
   manager.onSendElement = (s, t, x, y) => void sendElement(s, t, x, y);
   manager.onThumb = t => { if (!sidebar.webContents.isDestroyed()) sidebar.webContents.send('thumb', t.id, t.thumb ?? null); };
   manager.onNotice = showNotice;
+  manager.onAccessRequest = askSiteAccess;
   empty = uiView('empty.html');
   responsive = uiView('responsive.html');
   splitter = uiView('splitter.html');
@@ -696,6 +899,7 @@ app.whenReady().then(async () => {
   status = uiView('status.html');
   timeline = uiView('timeline.html');
   link = uiView('link.html');
+  find = uiView('find.html');
   sidebar = uiView('sidebar.html');
   sidebar.webContents.on('did-finish-load', () => { for (const s of manager.sessions.values()) for (const t of s.tabs) if (t.thumb) manager.onThumb(t); });
   topbar = uiView('topbar.html');
@@ -732,7 +936,7 @@ app.whenReady().then(async () => {
     const args = app.isPackaged ? [] : [app.getAppPath()];
     fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args }), { mode: 0o600 });
   } catch (e: any) { log(`launcher install failed: ${e.message}`); }
-  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, view: name => ({ sidebar, topbar, timeline, annotator, status, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
+  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, findText: () => findOpen ? findText : null, lastShare: () => lastShare, view: name => ({ sidebar, topbar, timeline, annotator, status, find, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
 });
 
@@ -740,13 +944,15 @@ app.on('second-instance', () => { win?.show(); win?.focus(); });
 app.on('activate', () => { win?.show(); });
 /** Set by a signal (e.g. Ctrl+C on `npm start`): quit without asking. */
 let quitBySignal = false;
+/** Set when the user chose a restart: quit without asking. */
+let restarting = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { quitBySignal = true; app.quit(); });
 app.on('before-quit', e => {
   if (quitting) return;
   e.preventDefault();
   void (async () => {
     const live = [...manager.sessions.values()].filter(s => !s.ended);
-    if (live.length && !testControl && !quitBySignal) {
+    if (live.length && !testControl && !quitBySignal && !restarting) {
       const r = await dialog.showMessageBox({
         type: 'question', buttons: ['Quit', 'Cancel'], defaultId: 1,
         message: `${live.length} session(s) are connected.`,
