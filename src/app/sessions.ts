@@ -174,12 +174,14 @@ let stepIds = 0;
 export interface Activity { tool: string; summary?: string; start: number; durationMs?: number; isError?: boolean; detail?: string; }
 
 /**
- * One tool call in the session's timeline: what the agent did, and how its
- * tab looked afterwards. Screenshots are files in the session's timeline
- * folder; a step whose page did not change shares the previous one's.
+ * One tool call in the timeline of a tab: what the agent did, and how the tab
+ * looked afterwards. Screenshots are files in the session's timeline folder;
+ * a step whose page did not change shares the previous one's.
  */
 export interface Step extends Activity {
   id: number;
+  /** The tab the step belongs to (the one in its screenshot). Its steps go with it. */
+  tab?: number;
   url?: string;
   title?: string;
   /** Base name of the screenshot files (<shot>.jpg, <shot>-t.jpg). No URL yet: the screenshot is still coming. */
@@ -228,6 +230,8 @@ export interface Session {
   storing?: Promise<void>;
   /** The agent's tab when the last step ended: the screenshot shows it, even if a new call already opened another tab. */
   shotTab?: Tab;
+  /** The agent closed a tab during the current call: that call belongs to the closed tab's timeline. */
+  agentClosed?: boolean;
   /** Tool calls so far: the clock for tab activity. Pauses and days off do not count. */
   uses: number;
   /** The tab the agent used last (it gets the session's status in the sidebar). */
@@ -262,6 +266,7 @@ interface SavedSession {
   lastActivity?: number;
   lastInteraction?: number;
   activity: Activity[];
+  /** Steps with `tab` as the index into `tabs` (tab ids change with an app restart). */
   timeline?: Step[];
   uses?: number;
   tabs: { url: string; active: boolean; usedAt?: number; fixedSize?: Tab['fixedSize']; emulation?: Omit<Emulation, 'by' | 'scale' | 'applied'> }[];
@@ -459,6 +464,7 @@ export class SessionManager {
         closeTab: async targetId => {
           const t = s.tabs.find(x => x.targetId === targetId);
           if (!t) return false;
+          s.agentClosed = true;
           t.view.webContents.close();
           return true;
         },
@@ -735,6 +741,9 @@ export class SessionManager {
   private tabGone(s: Session, tab: Tab): void {
     s.tabs = s.tabs.filter(t => t !== tab);
     clearTimeout(tab.thumbTimer);
+    // The tab's timeline goes with it.
+    const gone = s.timeline.filter(x => x.tab === tab.id);
+    if (gone.length) { s.timeline = s.timeline.filter(x => x.tab !== tab.id); this.dropSteps(s, gone); }
     if (s.agentTab === tab) s.agentTab = undefined;
     if (s.shotTab === tab) s.shotTab = undefined;
     // The view has no webContents any more. Nothing must point at the tab
@@ -982,7 +991,8 @@ export class SessionManager {
     const sessions: SavedSession[] = [];
     for (const s of this.sessions.values()) {
       if (s.ended && !s.pinned) continue;
-      const tabs = s.tabs.filter(t => !t.view.webContents.isDestroyed()).map(t => {
+      const live = s.tabs.filter(t => !t.view.webContents.isDestroyed());
+      const tabs = live.map(t => {
         const e = t.emulation?.by === 'user' ? t.emulation : undefined;
         return {
           url: t.view.webContents.getURL(), active: t === s.active, usedAt: t.usedAt, fixedSize: t.fixedSize,
@@ -993,7 +1003,8 @@ export class SessionManager {
       if (s.ctx && !s.partition.startsWith('persist:')) try { cookies = await electronSession.fromPartition(s.partition).cookies.get({}); } catch {}
       sessions.push({
         id: s.id, meta: s.meta, launch: s.launch, launcherPid: s.launcherPid, ended: s.ended, endedAt: s.endedAt, endReason: s.endReason,
-        pinned: s.pinned, muted: s.muted, lastActivity: s.lastActivity, lastInteraction: s.lastInteraction, activity: s.activity.slice(0, 30), timeline: s.timeline, uses: s.uses, tabs, cookies,
+        pinned: s.pinned, muted: s.muted, lastActivity: s.lastActivity, lastInteraction: s.lastInteraction, activity: s.activity.slice(0, 30), uses: s.uses, tabs, cookies,
+        timeline: s.timeline.map(x => ({ ...x, tab: live.findIndex(t => t.id === x.tab) })).filter(x => x.tab >= 0),
       });
     }
     try {
@@ -1034,19 +1045,24 @@ export class SessionManager {
   }
 
   private async restoreBrowser(s: Session, x: SavedSession): Promise<void> {
-    const tabs = (x.tabs ?? []).filter(t => t.url);
+    const tabs = (x.tabs ?? []).map((t, index) => ({ ...t, index })).filter(t => t.url);
+    // Saved steps name their tab by its index; the new tabs get new ids.
+    const steps = s.timeline;
+    s.timeline = [];
     if (!tabs.length) return;
     if (x.cookies?.length && !this.profilePartition(s)) await setCookies(electronSession.fromPartition(s.partition), x.cookies);
     await this.ensureBrowser(s);
     for (const [i, t] of tabs.entries()) {
       // The browser starts with one blank tab: it becomes the first one.
       const tab = i === 0 ? s.tabs[0] : await this.createTab(s, t.url, false);
+      for (const step of steps) if (step.tab === t.index) s.timeline.push({ ...step, tab: tab.id });
       if (i === 0) tab.view.webContents.loadURL(t.url).catch(() => {});
       if (t.usedAt !== undefined) tab.usedAt = t.usedAt;
       if (t.fixedSize) tab.fixedSize = t.fixedSize;
       if (t.emulation) this.emulate(tab, t.emulation);
       if (t.active) s.active = tab;
     }
+    s.timeline.sort((a, b) => a.id - b.id);
     for (const t of s.tabs) if (isActiveTab(s, t)) this.thumbSoon(s, 800, t);
   }
 
@@ -1061,8 +1077,10 @@ export class SessionManager {
    * a time per session; steps that end meanwhile share the next one.
    */
   private recordStep(s: Session, a: Activity): void {
-    s.timeline.push({ ...a, id: ++stepIds });
+    // A call that closed a tab belongs to that tab, so it went with it.
+    if (s.agentClosed) { s.agentClosed = false; return; }
     s.shotTab = s.agentTab ?? s.active;
+    s.timeline.push({ ...a, id: ++stepIds, tab: s.shotTab?.id });
     if (s.timeline.length > MAX_STEPS) this.dropSteps(s, s.timeline.splice(0, s.timeline.length - MAX_STEPS));
     this.shoot(s);
   }
@@ -1103,9 +1121,12 @@ export class SessionManager {
 
   /** Takes the picture of the agent's tab (the one of the last step). Without a tab: none. */
   private async grab(s: Session, steps: Step[], settle: boolean): Promise<{ img: Electron.NativeImage } | undefined> {
-    let wc = s.shotTab?.view.webContents;
-    if (!wc || wc.isDestroyed()) wc = (s.agentTab ?? s.active)?.view.webContents;
-    if (!wc || wc.isDestroyed()) return undefined;
+    let tab = s.shotTab;
+    if (!tab || tab.view.webContents.isDestroyed()) tab = s.agentTab ?? s.active;
+    const wc = tab?.view.webContents;
+    if (!tab || !wc || wc.isDestroyed()) return undefined;
+    // The steps belong to the tab in the screenshot.
+    for (const x of steps) x.tab = tab.id;
     const url = wc.getURL(), title = wc.getTitle();
     // A view that produces no frames never answers: the timeline must go on.
     const img = await Promise.race([wc.capturePage(), new Promise<null>(r => setTimeout(() => r(null), SHOT_TIMEOUT_MS))]);

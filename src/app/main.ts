@@ -118,6 +118,8 @@ function layout(): void {
   topbar.setBounds({ x: SIDEBAR, y: 0, width: width - SIDEBAR, height: TOPBAR });
   const selected = manager.sessions.get(manager.selected ?? '');
   if (timelineOpen && !selected) timelineOpen = false;
+  // The timeline is the front tab's: another tab (or session) ends the preview of an earlier step.
+  if (timelinePreview && !selected?.timeline.some(x => x.id === timelineStep && x.tab === selected.active?.id)) { timelinePreview = false; timelineStep = null; }
   // The status line takes the same room in every session, so switching sessions resizes no page.
   const bar = selected ? STATUSBAR : 0;
   const area = { x: SIDEBAR, y: TOPBAR + bar, width: width - SIDEBAR, height: height - TOPBAR - bar };

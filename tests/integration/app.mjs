@@ -386,6 +386,21 @@ const answerE = await askedE;
 check(answerE.text.includes('This was wrong') && answerE.text.includes('earlier state') && answerE.text.includes('/broken') && !answerE.text.includes('Elements in the area') && answerE.raw.result.content.some(c => c.type === 'image' && c.data.length > 100),
   'feedback on an earlier screenshot: its part and the hint that it is an earlier state', answerE.text.replace(/\n/g, ' | ').slice(0, 220));
 await control(`action ${sb.id} timeline false`);
+// The timeline belongs to a tab: another tab has its own, and a closed tab takes its steps (and the close call) with it
+await control(`select ${sb.id}`);
+const tlBefore = (await state()).sessions.find(s => s.id === sb.id).timeline.map(x => x.id);
+await b.tool('new_page', { url: `${base}/other` });
+await b.tool('take_snapshot', { pageId: await pageId(b) });
+await sleep(1200);
+const tlOther = (await state()).sessions.find(s => s.id === sb.id).timeline;
+check(tlOther.some(x => x.tool === 'new_page') && tlOther.some(x => x.tool === 'take_snapshot') && tlOther.every(x => !tlBefore.includes(x.id)),
+  'timeline: a new tab has its own timeline, starting with the new_page call', JSON.stringify(tlOther.map(x => x.tool)));
+const otherId = +((await b.tool('list_pages')).text.match(/^(\d+):.*\/other/m)?.[1]);
+await b.tool('close_page', { pageId: otherId });
+await sleep(1200);
+const tlAfter = (await state()).sessions.find(s => s.id === sb.id).timeline;
+check(tlBefore.length && tlAfter.map(x => x.id).join() === tlBefore.join(),
+  'timeline: closing a tab removes its steps; the close call does not show in the remaining tab', JSON.stringify(tlAfter.slice(-3).map(x => x.tool)));
 
 // Claude Code channel: with the development flag, feedback arrives as a channel event
 const d = new McpClient(process.execPath, [path.join(import.meta.dirname, 'channel-parent.mjs'), '--dangerously-load-development-channels', 'server:chrome-devtools', '--', ...launcher],
@@ -599,6 +614,9 @@ await dr.tool('navigate_page', { pageId: await pageId(dr), url: `${base}/delta` 
 await dr.tool('evaluate_script', { pageId: await pageId(dr), function: '() => { document.cookie = "token=abc"; return 1 }' });
 await dr.tool('new_page', { url: `${base}/delta-2` });
 const sdBefore = (await state()).sessions.find(s => s.project === 'epsilon');
+await control(`select ${sdBefore.id}`);
+await sleep(1200);
+const tlFront = (await state()).sessions.find(s => s.id === sdBefore.id).timeline.map(x => x.id);
 await control('quit');
 await sleep(2500);
 startApp();
@@ -607,6 +625,9 @@ let sdAfter;
 for (let i = 0; i < 30 && !sdAfter?.tabs.every(t => t.url); i++) { await sleep(100); sdAfter = (await state()).sessions.find(s => s.id === sdBefore.id); }
 check(sdAfter && sdAfter.tabs.map(t => t.url.replace(base, '')).join(',') === '/delta,/delta-2' && sdAfter.tabs[1].active,
   'app restart: the session comes back with its tabs at once', JSON.stringify(sdAfter?.tabs.map(t => [t.url, t.active])));
+await control(`select ${sdBefore.id}`);
+const tlFrontAfter = (await state()).sessions.find(s => s.id === sdBefore.id).timeline.map(x => x.id);
+check(tlFront.length && tlFrontAfter.join() === tlFront.join(), 'app restart: the front tab keeps its own timeline', JSON.stringify([tlFront, tlFrontAfter]));
 await sleep(2500);
 const dPages = await dr.tool('list_pages');
 check(dPages.text.includes('/delta-2') && dPages.text.includes('/delta'), 'app restart: the agent sees its restored tabs', dPages.text.replace(/\n/g, ' | ').slice(0, 200));

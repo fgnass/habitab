@@ -43,8 +43,8 @@ export function uiState(m: SessionManager) {
       statusTab: (s.agentTab ?? s.active)?.id ?? null,
       lastActivity: s.lastActivity ?? null,
       activity: s.activity.slice(0, 30),
-      /** The selected session's timeline (other sessions: only the count). */
-      timeline: s.id === m.selected ? s.timeline : null,
+      /** The timeline of the selected session's front tab (other sessions: only the count). */
+      timeline: s.id === m.selected ? s.timeline.filter(x => x.tab === s.active?.id) : null,
       timelineCount: s.timeline.length,
       held: s.held,
       feedback: s.feedback ? { question: s.feedback.question ?? null, since: s.feedback.since } : null,
