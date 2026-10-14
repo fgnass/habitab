@@ -419,9 +419,12 @@ function postToCodexQueue(bin: string, thread: string, text: string): Promise<bo
   });
 }
 
-/** Appended to every answer: keeps the feedback loop going without blocking the agent's work. */
-const FEEDBACK_FOLLOW_UP = 'When you have acted on this feedback, call wait_for_user_feedback again (for example "Is it right now?") ' +
-  'so the user can check the result or point at the next thing. Feedback the user gives in the meantime is kept and returned by that call.';
+/**
+ * Appended to every answer. Without it, agents ask in Habitab whether the
+ * change is right and wait there; the user sends more feedback on their own.
+ */
+const FEEDBACK_FOLLOW_UP = 'Act on this feedback and report in your session as usual. Do not call wait_for_user_feedback again to ask whether it is right: ' +
+  'the user sends more feedback on their own when needed.';
 
 /** Clients recognized by their MCP clientInfo name (the sidebar shows their icon). */
 const KNOWN_CLIENTS = ['claude', 'codex', 'opencode', 'cursor', 'gemini', 'windsurf'];
@@ -435,7 +438,7 @@ The pageId values of this server are internal: they keep counting up and do not 
 When you tell the user about a page, name it by its title or URL (for example "the tab with http://localhost:5180/"), never by its pageId or as "tab N".
 
 The user can point at things in this browser: call wait_for_user_feedback (with a short question) whenever you need the user to show you something on the page, \
-for example when a request is about "this button", "here" or "that area", when it is unclear which element is meant, or when you want the user to check a visual change. \
+for example when a request is about "this button", "here" or "that area", or when it is unclear which element is meant. \
 The user marks an area and writes a comment; you get the comment, the elements in the area and a screenshot of it. Prefer this over asking for a description in the chat. \
 The user can also mark an area or send console errors and failed requests on their own: then a short event says so, and calling wait_for_user_feedback returns the details at once.`;
 

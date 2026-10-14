@@ -250,8 +250,8 @@ await control(`action ${sb.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width":
 await sleep(600);
 check((await state()).clipboard?.includes('Copy me') && (await state()).sessions.find(s => s.id === sb.id).feedbackQueued === 1, 'without a waiting agent the area is kept (and copied to the clipboard)');
 const queued = await b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(queued.text.includes('Copy me') && queued.text.includes('call wait_for_user_feedback again') && queued.raw.result.content.some(c => c.type === 'image'),
-  'the next feedback call returns kept feedback at once, with the follow-up hint', queued.text.replace(/\n/g, ' | ').slice(0, 160));
+check(queued.text.includes('Copy me') && queued.text.includes('Do not call wait_for_user_feedback again') && queued.raw.result.content.some(c => c.type === 'image'),
+  'the next feedback call returns kept feedback at once, with the hint not to wait again', queued.text.replace(/\n/g, ' | ').slice(0, 160));
 
 // Problems: console errors per tab (failed requests as the console reports them), sent to the agent like feedback
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/broken` });
