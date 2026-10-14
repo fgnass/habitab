@@ -159,7 +159,9 @@ function layout(): void {
     }
     if (s.devtools && !s.devtools.webContents.isDestroyed()) {
       s.devtools.setVisible(!!dt);
-      s.devtools.setBounds(dt ? { x: area.x + pageWidth, y: area.y, width: area.width - pageWidth, height: area.height } : { x: 0, y: 0, width: 1, height: 1 });
+      // With the timeline open, DevTools start below its thumbnails (the page keeps its size).
+      const below = timelineOpen ? STRIP : 0;
+      s.devtools.setBounds(dt ? { x: area.x + pageWidth, y: area.y + below, width: area.width - pageWidth, height: Math.max(1, area.height - below) } : { x: 0, y: 0, width: 1, height: 1 });
     }
   }
   // Background behind the selected page (also covers other sessions).
@@ -184,10 +186,10 @@ function layout(): void {
   splitter.setVisible(selDevtools);
   splitter.setBounds(!selDevtools ? { x: 0, y: 0, width: 1, height: 1 } : splitting ? area : { x: area.x + selPageWidth - 3, y: area.y, width: 7, height: area.height });
   order.push(splitter);
-  // The screenshot of the timeline change the user chose: over the page, below the open status line.
+  // The screenshot of the timeline change the user chose: over the page (not DevTools), below the open status line.
   timeline.setVisible(timelinePreview);
   const top = TOPBAR + bar + STRIP;
-  const shotBounds = { x: area.x, y: top, width: area.width, height: Math.max(1, height - top) };
+  const shotBounds = { x: area.x, y: top, width: selPageWidth, height: Math.max(1, height - top) };
   timeline.setBounds(timelinePreview ? shotBounds : { x: 0, y: 0, width: 1, height: 1 });
   order.push(timeline);
   // Marking mode: the overlay covers exactly the selected page view, or that screenshot.
@@ -195,7 +197,7 @@ function layout(): void {
   annotator.setVisible(annotating);
   annotator.setBounds(annotating && sel ? (timelinePreview ? shotBounds : sel.view.getBounds()) : { x: 0, y: 0, width: 1, height: 1 });
   order.push(annotator);
-  // Opened, the status line lies over the page, DevTools and that screenshot.
+  // Opened, the status line lies over the page and that screenshot.
   order.push(status);
   // The hovered link's URL, at the bottom of the page. It must not lie under
   // the pointer, or the page would lose the hover: it goes to the right

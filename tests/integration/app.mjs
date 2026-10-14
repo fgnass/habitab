@@ -345,6 +345,16 @@ await sleep(1500);
 const tl2 = (await state()).sessions.find(s => s.id === sb.id).timeline;
 const [s1, s2] = tl2.slice(-2);
 check(s1?.shot && s1.shot === s2?.shot && fs.readdirSync(tlDir).filter(f => f.startsWith(`${s2.id}.`)).length === 0, 'timeline: an unchanged page shares the screenshot of the step before', JSON.stringify([s1?.shot, s2?.shot]));
+// The open timeline does not cover docked DevTools: they start below its thumbnails
+await control(`devtools ${sb.id}`);
+let dtHeight;
+for (let i = 0; i < 50 && !dtHeight; i++) { await sleep(200); dtHeight = (await uiEval('devtools', 'innerHeight'))?.result; }
+await control(`action ${sb.id} timeline true`);
+await sleep(300);
+const dtHeightOpen = (await uiEval('devtools', 'innerHeight'))?.result;
+await control(`action ${sb.id} timeline false`);
+await control(`devtools ${sb.id}`);
+check(dtHeight - dtHeightOpen === 59, 'timeline: open, it leaves docked DevTools free (they start below the thumbnails)', JSON.stringify([dtHeight, dtHeightOpen]));
 // Feedback on an earlier screenshot: the area is cut out of it, and the agent learns it is an earlier state
 const earlier = tl2.find(x => x.tool === 'navigate_page' && x.url?.endsWith('/broken') && x.shot);
 await control(`action ${sb.id} timeline true`);
