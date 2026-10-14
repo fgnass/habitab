@@ -290,7 +290,8 @@ await control(`select ${sb.id}`);
 await control(`action ${sb.id} problems`);
 let hooked;
 for (let i = 0; i < 50 && hooked !== 'hooked'; i++) { await sleep(200); hooked = (await uiEval('devtools', 'globalThis.__habitab ? "hooked" : "no"'))?.result; }
-const consoleShown = (await uiEval('devtools', '!!document.querySelector(".console-view")'))?.result;
+let consoleShown;
+for (let i = 0; i < 30 && consoleShown !== true; i++) { consoleShown = (await uiEval('devtools', '!!document.querySelector(".console-view")'))?.result; if (consoleShown !== true) await sleep(100); }
 check((await state()).sessions.find(s => s.id === sb.id).devtools && hooked === 'hooked' && consoleShown === true,
   'error badge opens the DevTools on the Console panel, with the Send-to-Agent hook installed', JSON.stringify({ hooked, consoleShown }));
 const askedD = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
@@ -298,8 +299,26 @@ for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).fe
 // The frontend reports the chosen item as a console line (the native menu itself cannot be clicked here).
 await uiEval('devtools', 'console.log("HABITAB_SEND " + JSON.stringify({ text: "Uncaught Error: Boom (from the console)" }))');
 const answerD = await askedD;
-check(answerD.text.includes('selected in the DevTools') && answerD.text.includes('Boom (from the console)') && answerD.text.includes('/broken'),
+check(answerD.text.includes('from the DevTools') && answerD.text.includes('Boom (from the console)') && answerD.text.includes('/broken'),
   'a DevTools selection goes to the waiting agent with the page URL', answerD.text.replace(/\n/g, ' | ').slice(0, 200));
+// Without a selection, the item sends the console message under the pointer (the native menu is not shown in tests)
+const askedM = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
+for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).feedback; i++) await sleep(100);
+const rightClicked = (await uiEval('devtools', `(() => {
+  const all = (root, out = []) => { for (const e of root.querySelectorAll('*')) { if (e.classList.contains('console-message-wrapper')) out.push(e); if (e.shadowRoot) all(e.shadowRoot, out); } return out; };
+  const m = all(document).find(e => e.classList.contains('console-error-level'));
+  if (!m) return null;
+  getSelection().removeAllRanges();
+  const stop = e => e.stopPropagation();
+  addEventListener('contextmenu', stop, true);
+  m.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, composed: true }));
+  removeEventListener('contextmenu', stop, true);
+  DevToolsAPI.contextMenuItemSelected(990);
+  return m.querySelector('.console-message-text').innerText;
+})()`.replace(/\n\s*/g, ' ')))?.result;
+const answerM = await askedM;
+check(rightClicked && answerM.text.includes('from the DevTools') && answerM.text.includes(rightClicked) && answerM.text.includes('/broken'),
+  'without a selection, the right-clicked console message goes to the agent', answerM.text.replace(/\n/g, ' | ').slice(0, 200));
 // Camera/microphone: without a stored answer the user is asked; tests show no sheet, so the request is denied at once
 const gum = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => navigator.mediaDevices.getUserMedia({ video: true }).then(() => "granted", e => e.name)' });
 check(gum.text.includes('NotAllowedError'), 'camera: a request without an answer is denied in tests (no sheet, no hang)', gum.text.replace(/\n/g, ' | ').slice(0, 160));

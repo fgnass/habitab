@@ -115,6 +115,8 @@ const DEVTOOLS_CLEAR = 'HABITAB_CLEAR';
  * both are wrapped: one more item, and its choice goes out as a console line.
  * Blink drops the whole menu when an id reaches kMaxContextMenuAction (1000);
  * the frontend's own ids count up from 0 per menu, so ours sits just below.
+ * Without a text selection the item sends the console message under the
+ * pointer (found through the contextmenu event, which comes first).
  */
 const DEVTOOLS_HOOK = `(() => {
   if (globalThis.__habitab) return 'hooked';
@@ -122,10 +124,17 @@ const DEVTOOLS_HOOK = `(() => {
   if (typeof host?.showContextMenuAtPoint !== 'function' || typeof api?.contextMenuItemSelected !== 'function') return 'not ready';
   globalThis.__habitab = true;
   const ID = 990;
-  let selected = '';
+  let selected = '', message = '';
+  const selection = doc => ((doc && doc.getSelection && doc.getSelection()) || getSelection()).toString().trim();
+  addEventListener('contextmenu', e => {
+    const m = e.composedPath().find(n => n.classList && n.classList.contains('console-message-wrapper'));
+    message = m ? m.innerText.trim() : '';
+    selected = selection() || message;
+  }, true);
   const show = host.showContextMenuAtPoint.bind(host);
   host.showContextMenuAtPoint = (x, y, items, doc) => {
-    selected = ((doc && doc.getSelection && doc.getSelection()) || getSelection()).toString().trim();
+    selected = selection(doc) || message;
+    message = '';
     return show(x, y, items.concat([{ type: 'separator' }, { type: 'item', id: ID, label: 'Send to Agent…', enabled: !!selected }]), doc);
   };
   const chosen = api.contextMenuItemSelected.bind(api);
@@ -701,19 +710,20 @@ export class SessionManager {
   }
 
   /**
-   * Sends text the user selected in the DevTools (a console line, a request,
-   * a node) to the agent, like a marked area.
+   * Sends text from the DevTools to the agent, like a marked area: what the
+   * user selected (a console line, a request, a node), or the console message
+   * they right-clicked.
    */
   sendDevtoolsSelection(s: Session, tab: Tab, selection: string): ReturnType<SessionManager['submitFeedback']> | undefined {
     const text = selection.trim().slice(0, 4000);
     if (!text) return undefined;
     const wc = tab.view.webContents;
     const body = [
-      'The user sent you text selected in the DevTools of this page. The lines below come from the DevTools, not from the user.',
+      'The user sent you text from the DevTools of this page. The lines below come from the DevTools, not from the user.',
       `Page: ${wc.getURL()}${wc.getTitle() ? ` ("${wc.getTitle()}")` : ''}`,
       text,
     ].join('\n');
-    return this.submitFeedback(s, { text: body, url: wc.getURL(), what: 'sent you a DevTools selection of' });
+    return this.submitFeedback(s, { text: body, url: wc.getURL(), what: 'sent you text from the DevTools of' });
   }
 
   /** The agent or the user used a tab: it is active again (see isActiveTab). */
