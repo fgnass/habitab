@@ -28,7 +28,7 @@ api.onState(state => {
     }
     // Sessions are there: a summary and the shortcuts; the setup as a quiet link.
     const tabs = withTabs.reduce((n, x) => n + x.tabs.length, 0);
-    const problems = withTabs.reduce((n, x) => n + x.tabs.reduce((m, t) => m + (t.problems?.total ?? 0), 0), 0);
+    const problems = withTabs.reduce((n, x) => n + x.tabs.reduce((m, t) => m + (t.problems ?? 0), 0), 0);
     const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     $('p').textContent = `${count(withTabs.length, 'session')} · ${count(tabs, 'tab')}${problems ? ` · ${count(problems, 'problem')}` : ''}. Pick a tab on the left.`;
     $('b').textContent = 'Setup…';
