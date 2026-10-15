@@ -19,6 +19,7 @@ a{color:#2F6B3A}a:hover{color:#15231A}
 *{box-sizing:border-box}
 img{display:block}
 h1,h2,h3{text-wrap:balance}
+  @media (max-width: 520px){ pre{ font-size: 13px !important; padding: 20px 18px !important; white-space: pre-wrap !important; overflow-wrap: anywhere; } }
 </style>
 </head>
 <body>
@@ -107,7 +108,7 @@ h1,h2,h3{text-wrap:balance}
         <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 14px">
           <p style="margin: 0; color: #3C4A40">Describing a piece of a page in a chat window is slow and lossy. So is copying an error out of the console. And you only find out there <em>is</em> an error after you open the console, scroll, and decide whether that red line is the expected one or a new one.</p>
           <p style="margin: 0; color: #3C4A40"><strong>Habitab lets you point.</strong> Mark an area of the page, write a note. The agent gets your words, the URL, the elements inside the area and that part of the screen as an image. The page's context menu has “Send Element to Agent…” for the element under the pointer.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>And it shows problems before you ask.</strong> Console errors, uncaught exceptions and failed requests are counted per tab: a red count in the tab's row and in the top bar, cleared when the page loads a new document. Open the list and send one problem or all of them to the agent, the same way as a marked area.</p>
+          <p style="margin: 0; color: #3C4A40"><strong>And it shows problems before you ask.</strong> Console errors, uncaught exceptions and failed requests are counted per tab: a red count in the tab's row and in the top bar, cleared when the page loads a new document. Click the count and the tab's console opens on them. Right-click the count, or a message in the console, and send them to the agent, the same way as a marked area.</p>
         </div>
       </div>
       <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start">
@@ -116,8 +117,8 @@ h1,h2,h3{text-wrap:balance}
           <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Drag a rectangle over the page and write a note.</figcaption>
         </figure>
         <figure style="flex: 1 1 440px; margin: 0; display: flex; flex-direction: column; gap: 10px">
-          <img src="img/problems.png" alt="The problems list: a console error, a failed GET request with HTTP 503 and an uncaught ReferenceError, with a 'Send All to Agent' button" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
-          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Three problems on the checkout page, seconds old. One click sends them.</figcaption>
+          <img src="img/problems.png" alt="The top bar with a red count of 3 and below it the docked console: an uncaught ReferenceError, a failed request with HTTP 503 and a console error" style="width: 100%; height: auto; border: 1px solid #15231A; border-radius: 8px">
+          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Three problems on the checkout page, seconds old. The red count opens them in the console.</figcaption>
         </figure>
       </div>
       <p style="margin: 0; color: #3C4A40; font-size: 16px; max-width: 760px">Without a waiting agent, a note goes to the session's inbox: an idle Claude Code session starts a new turn with it, a busy one reads it between tool calls. Codex gets it through its queue. The agent then asks Habitab for the details with <code style="font-family: 'Courier Prime', monospace; font-size: 14px">wait_for_user_feedback</code>, a tool the launcher adds.</p>
@@ -205,14 +206,11 @@ h1,h2,h3{text-wrap:balance}
         <p style="margin: 0; color: #3C4A40">Needs macOS, Node ≥ 20 and npm. The installer builds the app, puts it in /Applications and starts it. The app then offers the setup: it shows every change to your MCP configurations before applying it, and only <code style="font-family: 'Courier Prime', monospace; font-size: 15px">command</code> and <code style="font-family: 'Courier Prime', monospace; font-size: 15px">args</code> change; comments and formatting stay. Running sessions need a restart.</p>
         <p style="margin: 0; color: #3C4A40; font-size: 16px">Built for Claude Code and Codex: session mapping, the feedback inbox, the lot. OpenCode and Gemini CLI get the shared browser. <code style="font-family: 'Courier Prime', monospace; font-size: 15px">--uninstall</code> restores every configuration byte for byte.</p>
       </div>
-      <pre style="flex: 1 1 440px; margin: 0; padding: 26px 28px; border: 1.2px solid #15231A; background: #F6F7F0; font-family: 'Courier Prime', monospace; font-size: 15px; line-height: 1.7; overflow-x: auto; white-space: pre; color: #15231A; align-self: flex-start"><span style="color: #3C4A40">$</span> git clone https://github.com/fgnass/habitab.git &amp;&amp; cd habitab
+      <pre style="flex: 1 1 440px; margin: 0; padding: 26px 28px; border: 1.2px solid #15231A; background: #F6F7F0; font-family: 'Courier Prime', monospace; font-size: 15px; line-height: 1.7; overflow-x: auto; white-space: pre; color: #15231A; align-self: flex-start"><span style="color: #3C4A40">$</span> git clone https://github.com/fgnass/habitab
+<span style="color: #3C4A40">$</span> cd habitab
 <span style="color: #3C4A40">$</span> ./install.sh
 
-<span style="color: #3C4A40"># then in the app: Habitab → Setup…
-# or from the shell:</span>
-<span style="color: #3C4A40">$</span> habitab setup            <span style="color: #3C4A40"># preview</span>
-<span style="color: #3C4A40">$</span> habitab setup --apply
-<span style="color: #3C4A40">$</span> habitab status           <span style="color: #3C4A40"># sessions that need a restart</span></pre>
+<span style="color: #3C4A40"># then in the app: Habitab → Setup…</span></pre>
     </div>
   </section>
 
