@@ -2,8 +2,9 @@
 //
 //   npm run build && node tests/integration/install.mjs
 //
-// Copies the chrome-devtools-mcp entries of the real configurations (read
-// only) into CLAUDE_CONFIG_DIR / CODEX_HOME sandboxes and adds edge cases.
+// Writes typical client configurations and edge cases into CLAUDE_CONFIG_DIR /
+// CODEX_HOME sandboxes. The real configurations are not read, so the result
+// does not depend on the machine (or on a Habitab setup already applied there).
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,7 +12,8 @@ import path from 'node:path';
 import { check } from './mcp-client.mjs';
 
 const cli = path.resolve(import.meta.dirname, '../../dist/launcher/main.js');
-const root = fs.mkdtempSync(path.join(process.env.TEST_TMP ?? os.tmpdir(), 'hb-install-'));
+// The real path: Claude Code keys projects by it (macOS: /var is a link to /private/var).
+const root = fs.realpathSync(fs.mkdtempSync(path.join(process.env.TEST_TMP ?? os.tmpdir(), 'hb-install-')));
 const claudeDir = path.join(root, 'claude'), codexHome = path.join(root, 'codex'), home = path.join(root, 'habitab');
 const proj = path.join(root, 'proj');
 // Second Codex project: taken over, then no longer trusted before uninstall.
@@ -24,10 +26,13 @@ const env = { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexHom
 const run = (...args) => execFileSync(process.execPath, [cli, ...args], { env, encoding: 'utf8' });
 const launcher = path.join(home, 'bin', 'habitab');
 
-// --- Claude Code sandbox: real user-scope entries + local + project cases.
-const real = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
-const userServers = Object.fromEntries(Object.entries(real.mcpServers ?? {}).filter(([, v]) => JSON.stringify(v).includes('chrome-devtools-mcp')));
-userServers['other-tool'] = { type: 'stdio', command: 'node', args: ['server.js'], env: {} };
+// --- Claude Code sandbox: user-scope entries (as `claude mcp add` writes them) + local + project cases.
+const userServers = {
+  'chrome-devtools': { type: 'stdio', command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest'], env: {} },
+  // Connects to a browser of its own (here an Electron app): not Habitab's business.
+  'electron-devtools': { type: 'stdio', command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest', '--browser-url=http://127.0.0.1:9229'], env: {} },
+  'other-tool': { type: 'stdio', command: 'node', args: ['server.js'], env: {} },
+};
 const claudeJson = {
   numStartups: 1,
   mcpServers: userServers,
@@ -40,12 +45,24 @@ fs.writeFileSync(path.join(proj, '.mcp.json'), JSON.stringify({ mcpServers: {
 } }, null, 2));
 const mcpJsonBefore = fs.readFileSync(path.join(proj, '.mcp.json'), 'utf8');
 
-// --- Codex sandbox: the real config file plus edge cases and a trusted project.
-// Trusted projects of the real file are removed: they would point the scan
-// at real project files outside the sandbox.
-const realToml = fs.readFileSync(path.join(os.homedir(), '.codex', 'config.toml'), 'utf8')
-  .replace(/^\[projects\.[^\n]*\]\n(?:[^\[\n][^\n]*\n|\n)*/gm, '');
-const codexToml = realToml + `
+// --- Codex sandbox: a typical config file (settings, another server, tool approvals)
+// plus edge cases and a trusted project.
+const baseToml = `model = "gpt-5-codex"
+# My settings
+approval_policy = "on-request"
+
+[mcp_servers.docs]
+command = "npx"
+args = ["-y", "docs-mcp"]
+
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
+
+[mcp_servers.chrome-devtools.tools.take_screenshot]
+approval_mode = "approve"
+`;
+const codexToml = baseToml + `
 
 # Habitab test entries
 [mcp_servers."cdp-quoted"]
@@ -103,8 +120,8 @@ const jsonText = k => fs.readFileSync(jsonFiles[k][0], 'utf8');
 // --- 1. Preview
 const preview = run('setup');
 const status = name => (preview.match(new RegExp(`^\\[(\\w+)\\] [^\\n]*· ${name} ·`, 'm')) ?? [])[1];
-check(status('chrome-devtools') === 'migrate', 'real Claude/Codex chrome-devtools entries proposed');
-check(status('electron-devtools') === 'external' || !userServers['electron-devtools'], 'external --browser-url entry left alone');
+check(status('chrome-devtools') === 'migrate', 'Claude/Codex chrome-devtools entries proposed');
+check(status('electron-devtools') === 'external', 'external --browser-url entry left alone');
 check(!preview.includes('other-tool'), 'non chrome-devtools servers are ignored');
 check(status('cdp-local') === 'migrate', 'Claude local scope entry proposed');
 check(status('team-browser') === 'migrate' && preview.includes('Project'), 'Claude .mcp.json entry proposed');
@@ -133,7 +150,7 @@ check(local['cdp-local'].command === launcher && local['cdp-local'].env.DEBUG ==
 check(local['team-browser']?.command === launcher, 'Claude project entry shadowed by local override');
 check(fs.readFileSync(path.join(proj, '.mcp.json'), 'utf8') === mcpJsonBefore, 'shared .mcp.json unchanged');
 const toml = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
-check(toml.startsWith(realToml.split('[mcp_servers.chrome-devtools]')[0]), 'Codex file before the entry byte-identical');
+check(toml.startsWith(baseToml.split('[mcp_servers.chrome-devtools]')[0]), 'Codex file before the entry byte-identical');
 check(toml.includes('[mcp_servers.chrome-devtools.tools.take_screenshot]\napproval_mode = "approve"'), 'Codex tool approvals kept');
 check(toml.includes('startup_timeout_sec = 30') && toml.includes('enabled = true'), 'Codex other keys kept');
 check(/\[mcp_servers\.cdp-noargs\]\ncommand = ".*habitab"\nargs = \["mcp", "--", "\/opt\/homebrew\/bin\/chrome-devtools-mcp"\]\nenabled = true/.test(toml), 'Codex args line inserted for entry without args');
