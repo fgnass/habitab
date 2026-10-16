@@ -761,7 +761,7 @@ async function changeSecureOrigins(list: string[], what: string): Promise<void> 
   app.quit();
 }
 
-/** Button and ⌘\: full width ↔ thumbnails only. A hidden sidebar comes back first. */
+/** Button and ⇧⌘B: full width ↔ thumbnails only. A hidden sidebar comes back first. */
 function toggleSidebarWidth(): void {
   setPrefs(prefs().sidebarHidden ? { sidebarHidden: false } : { sidebarCompact: !prefs().sidebarCompact });
   layout();
@@ -850,12 +850,13 @@ function updateMenu(): void {
     ] },
     { label: 'View', submenu: [
       { label: 'Show Sidebar', type: 'checkbox', checked: !prefs().sidebarHidden, accelerator: isMac ? 'Ctrl+Cmd+S' : 'Ctrl+Shift+S', click: toggleSidebarHidden },
-      { label: 'Thumbnails Only', type: 'checkbox', checked: !!prefs().sidebarCompact, accelerator: 'CmdOrCtrl+\\', click: toggleSidebarWidth },
+      { label: 'Thumbnails Only', type: 'checkbox', checked: !!prefs().sidebarCompact, accelerator: 'CmdOrCtrl+Shift+B', click: toggleSidebarWidth },
       { type: 'separator' },
       { label: 'Reload', accelerator: 'CmdOrCtrl+R', enabled: !!s?.active, click: () => s?.active?.view.webContents.reload() },
       { label: 'Reload Without Cache', accelerator: 'CmdOrCtrl+Shift+R', enabled: !!s?.active, click: () => s?.active?.view.webContents.reloadIgnoringCache() },
-      { label: 'Back', accelerator: 'CmdOrCtrl+[', click: () => s?.active?.view.webContents.navigationHistory.goBack() },
-      { label: 'Forward', accelerator: 'CmdOrCtrl+]', click: () => s?.active?.view.webContents.navigationHistory.goForward() },
+      // Linux: the browser keys (Ctrl+[ is hard to type on many layouts).
+      { label: 'Back', accelerator: isMac ? 'Cmd+[' : 'Alt+Left', click: () => s?.active?.view.webContents.navigationHistory.goBack() },
+      { label: 'Forward', accelerator: isMac ? 'Cmd+]' : 'Alt+Right', click: () => s?.active?.view.webContents.navigationHistory.goForward() },
       { type: 'separator' },
       { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => zoom(0.5) },
       { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoom(-0.5) },

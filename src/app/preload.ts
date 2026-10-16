@@ -20,7 +20,7 @@ window.addEventListener('DOMContentLoaded', markPlatform);
 // The UI writes key hints in macOS notation (⇧⌘P). Other platforms see their own
 // (Ctrl+Shift+P), with the accelerators of the menu where they differ.
 if (process.platform !== 'darwin') {
-  const special: Record<string, string> = { '⌥⌘I': 'Ctrl+Shift+I', '⌃⌘S': 'Ctrl+Shift+S' };
+  const special: Record<string, string> = { '⌥⌘I': 'Ctrl+Shift+I', '⌃⌘S': 'Ctrl+Shift+S', '⌘[': 'Alt+←', '⌘]': 'Alt+→' };
   const keys = (s: string) => s.replace(/[⌃⌥⇧⌘]+./g, k => special[k] ?? [
     k.includes('⌘') || k.includes('⌃') ? 'Ctrl' : '', k.includes('⌥') ? 'Alt' : '', k.includes('⇧') ? 'Shift' : '', k.slice(-1).toUpperCase(),
   ].filter(Boolean).join('+'));

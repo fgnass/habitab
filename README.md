@@ -31,7 +31,7 @@ Habitab.app (Electron)
      grouped by session under a quiet header (client, project, state, the
      session's options and its menu); tabs that neither the agent nor the user used
      during the session's last 25 tool calls fold away as inactive tabs; full
-     width or thumbnails only (⌘\),
+     width or thumbnails only (⇧⌘B),
      View → Show Sidebar (⌃⌘S) hides it
    • pause the agent's debugger while you test (per project, session menu): an
      enabled CDP debugger makes V8 run WebAssembly as slow debug code (also in
