@@ -161,9 +161,9 @@ check(pendingAgain.length === 0, 'second run proposes nothing new (except skippe
 { const m = (again.match(/^\[migrated\]/gm) ?? []).length; const expected = (preview.match(/^\[migrate\]/gm) ?? []).length - 1; check(m === expected, 'all applied entries reported as migrated', `${m}/${expected}`); }
 
 // --- 4. User changes after apply, then uninstall
-execFileSync(process.env.HABITAB_CLAUDE_CLI ?? 'claude', ['mcp', 'remove', 'cdp-local', '-s', 'local'], { env, cwd: proj, encoding: 'utf8' });
+execFileSync(claudeBin, ['mcp', 'remove', 'cdp-local', '-s', 'local'], { env, cwd: proj, encoding: 'utf8' });
 const changed = { ...local['cdp-local'], env: { DEBUG: '1', ADDED_LATER: 'yes' } };
-execFileSync(process.env.HABITAB_CLAUDE_CLI ?? 'claude', ['mcp', 'add-json', 'cdp-local', JSON.stringify(changed), '-s', 'local'], { env, cwd: proj, encoding: 'utf8' });
+execFileSync(claudeBin, ['mcp', 'add-json', 'cdp-local', JSON.stringify(changed), '-s', 'local'], { env, cwd: proj, encoding: 'utf8' });
 let t2 = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
 t2 = t2.replace('startup_timeout_sec = 30', 'startup_timeout_sec = 45').replace(proj2Trust, '');
 fs.writeFileSync(path.join(codexHome, 'config.toml'), t2);

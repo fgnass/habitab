@@ -29,7 +29,13 @@ const env = {
   HABITAB_CODEX_COMMAND: '',
 };
 const launcher = ['node', path.join(root, 'dist/launcher/main.js'), 'mcp', '--', 'npx', '-y', 'chrome-devtools-mcp@latest', '--isolated'];
-const chromesBefore = new Set(execFileSync('pgrep', ['-f', 'Google Chrome.app/Contents/MacOS/Google Chrome'], { encoding: 'utf8' }).split('\n').filter(Boolean));
+// Chrome processes (a Chrome that chrome-devtools-mcp would start); pgrep fails when there is none.
+const chromePids = () => {
+  // Linux: the executable only (Habitab's own profiles live in a "chromium" folder).
+  const pattern = process.platform === 'darwin' ? 'Google Chrome.app/Contents/MacOS/Google Chrome' : '^[^ ]*(google-chrome|/chrome/chrome|chromium)( |$)';
+  try { return execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' }).split('\n').filter(Boolean); } catch { return []; }
+};
+const chromesBefore = new Set(chromePids());
 
 // --- app with test control channel
 let app, events = [];
@@ -321,7 +327,8 @@ check(rightClicked && answerM.text.includes('from the DevTools') && answerM.text
   'without a selection, the right-clicked console message goes to the agent', answerM.text.replace(/\n/g, ' | ').slice(0, 200));
 // Camera/microphone: without a stored answer the user is asked; tests show no sheet, so the request is denied at once
 const gum = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => navigator.mediaDevices.getUserMedia({ video: true }).then(() => "granted", e => e.name)' });
-check(gum.text.includes('NotAllowedError'), 'camera: a request without an answer is denied in tests (no sheet, no hang)', gum.text.replace(/\n/g, ' | ').slice(0, 160));
+// A machine without a camera (e.g. a VM) gets NotFoundError before anything asks.
+check(gum.text.includes('NotAllowedError') || gum.text.includes('NotFoundError'), 'camera: a request without an answer is denied in tests (no sheet, no hang)', gum.text.replace(/\n/g, ' | ').slice(0, 160));
 
 // Reading the clipboard asks the user like camera access; tests show no sheet, so it is denied at once
 const clip = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => navigator.permissions.query({ name: "clipboard-read" }).then(s => s.state)' });
@@ -337,17 +344,19 @@ await control(`devtools ${sb.id}`);
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 check(!(await state()).sessions.find(s => s.id === sb.id).nav.problems.length, 'problems: a new page starts without problems');
 
-// Web Share API: Electron lacks it; Habitab adds navigator.share before page scripts and receives the data (no menu in tests)
-await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/share` });
-await control(`select ${sb.id}`);
-const shareDetect = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => [window.early, typeof navigator.canShare, navigator.canShare({ url: "/y" }), navigator.canShare({})].join(",")' });
-check(shareDetect.text.includes('function,function,true,false'), 'web share: navigator.share exists before page scripts, canShare validates', shareDetect.text.replace(/\n/g, ' | ').slice(0, 160));
-await control(`userclick ${sb.id}`);
-let shared;
-for (let i = 0; i < 30 && !shared; i++) { await sleep(100); shared = (await state()).lastShare; }
-const shareResult = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => window.r' });
-check(shared?.title === 'T' && shared.text === 'Hello' && shared.url === `${base}/x` && shared.files?.[0] === 'a.txt' && shareResult.text.includes('AbortError'),
-  'web share: a click shares title, text, absolute URL and files; the page gets the result', JSON.stringify(shared) + ' ' + shareResult.text.replace(/\n/g, ' ').slice(-40));
+// Web Share API: Electron lacks it; Habitab adds navigator.share before page scripts and receives the data (no menu in tests). macOS only: there is no share menu elsewhere
+if (process.platform === 'darwin') {
+  await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/share` });
+  await control(`select ${sb.id}`);
+  const shareDetect = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => [window.early, typeof navigator.canShare, navigator.canShare({ url: "/y" }), navigator.canShare({})].join(",")' });
+  check(shareDetect.text.includes('function,function,true,false'), 'web share: navigator.share exists before page scripts, canShare validates', shareDetect.text.replace(/\n/g, ' | ').slice(0, 160));
+  await control(`userclick ${sb.id}`);
+  let shared;
+  for (let i = 0; i < 30 && !shared; i++) { await sleep(100); shared = (await state()).lastShare; }
+  const shareResult = await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => window.r' });
+  check(shared?.title === 'T' && shared.text === 'Hello' && shared.url === `${base}/x` && shared.files?.[0] === 'a.txt' && shareResult.text.includes('AbortError'),
+    'web share: a click shares title, text, absolute URL and files; the page gets the result', JSON.stringify(shared) + ' ' + shareResult.text.replace(/\n/g, ' ').slice(-40));
+}
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 
 // Timeline: each tool call with a screenshot of the agent's tab; unchanged pages share one
@@ -517,7 +526,7 @@ check(emu?.by === 'agent' && emu.width === 500 && emu.height === 400, "the agent
 await control(`action ${sb.id} responsive`);
 await sleep(400);
 vpa = await viewport();
-check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.[0] > 600 && vpa?.[2] === 2, 'leaving responsive mode restores the page size', JSON.stringify(vpa));
+check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.[0] > 600 && vpa?.[2] === vp0?.[2], 'leaving responsive mode restores the page size', JSON.stringify(vpa));
 
 // Active tabs: each tab the agent or the user used during the session's last 25 tool calls
 { const z = client('tab-rule', 'claude-code');
@@ -573,11 +582,13 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
 { const f = events.filter(e => e.focus && e.at > agentStart && !e.afterSelect); check(f.length === 0, 'window never takes focus during agent work', f.map(e => e.stack).join(' || ')); }
 
 // No Chrome started, one app in the Dock
-const chromesAfter = execFileSync('pgrep', ['-f', 'Google Chrome.app/Contents/MacOS/Google Chrome'], { encoding: 'utf8' }).split('\n').filter(Boolean).filter(p => !chromesBefore.has(p));
+const chromesAfter = chromePids().filter(p => !chromesBefore.has(p));
 check(chromesAfter.length === 0, 'no Chrome process started', chromesAfter.join(','));
-const dock = execFileSync('osascript', ['-e', 'tell application "System Events" to get name of every process whose background only is false'], { encoding: 'utf8' });
 // The test app has no Dock icon unless it runs visibly (HABITAB_TEST_VISIBLE=1).
-if (process.env.HABITAB_TEST_VISIBLE === '1') check((dock.match(/Electron|Habitab/g) ?? []).length === 1, 'exactly one Habitab/Electron app in the Dock');
+if (process.env.HABITAB_TEST_VISIBLE === '1' && process.platform === 'darwin') {
+  const dock = execFileSync('osascript', ['-e', 'tell application "System Events" to get name of every process whose background only is false'], { encoding: 'utf8' });
+  check((dock.match(/Electron|Habitab/g) ?? []).length === 1, 'exactly one Habitab/Electron app in the Dock');
+}
 
 // Regular end closes the session browser
 await a.close();
