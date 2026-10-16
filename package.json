@@ -3,6 +3,7 @@
   "productName": "Habitab",
   "version": "0.2.0",
   "description": "One home for your agent browsers",
+  "desktopName": "habitab.desktop",
   "main": "dist/app/main.js",
   "private": true,
   "scripts": {
@@ -11,7 +12,8 @@
     "preview": "npm run build && node tests/integration/showcase.mjs",
     "test": "npm run build && node --test dist/tests/unit/*.test.js",
     "test:integration": "npm run build && node tests/integration/run.mjs",
-    "dist": "npm run build && electron-builder --mac --dir && node scripts/sign.mjs"
+    "dist": "npm run build && electron-builder --mac --dir && node scripts/sign.mjs",
+    "dist:linux": "npm run build && electron-builder --linux --dir"
   },
   "build": {
     "appId": "dev.habitab.Habitab",
@@ -33,7 +35,8 @@
       }
     },
     "linux": {
-      "target": "AppImage",
+      "target": "dir",
+      "executableName": "habitab",
       "category": "Development"
     },
     "win": {

@@ -6,6 +6,7 @@
 <style>
   body { display: flex; flex-direction: column; background: var(--page); }
   header { display: flex; gap: 14px; align-items: center; padding: 38px 28px 18px; -webkit-app-region: drag; }
+  :root:not([data-platform=darwin]) header { padding-top: 18px; }
   header img { width: 52px; height: 52px; flex: none; }
   h1 { font-size: 18px; margin: 0 0 3px; }
   #summary { margin: 0; color: var(--text-2); }

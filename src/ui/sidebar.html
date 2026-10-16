@@ -5,6 +5,9 @@
 <style>
   body { display: flex; flex-direction: column; background: transparent; }
   header { height: 52px; flex: none; -webkit-app-region: drag; }
+  /* Without vibrancy and traffic lights (Linux, Windows). */
+  :root:not([data-platform=darwin]) body { background: var(--sidebar); }
+  :root:not([data-platform=darwin]) header { height: 12px; }
   .search { margin: 0 12px 6px; position: relative; }
   .search input { width: 100%; border: 0; outline: 0; border-radius: 7px; padding: 6px 8px 6px 28px; background: var(--field); }
   .search input:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }

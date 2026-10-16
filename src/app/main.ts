@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { ensureHome, log, openLog, paths } from '../shared/paths';
 import { installLauncher } from '../installer/installer';
+import { desktopEnv, installDesktopEntry } from '../shared/platform';
 import { prefs, setPrefs, SidebarMode, sidebarMode } from './prefs';
 import { Session, SessionManager, SiteAccess, Tab } from './sessions';
 import { uiState } from './ui-state';
@@ -802,6 +803,7 @@ function openSetup(): void {
     width: 760, height: 620, minWidth: 600, minHeight: 420, title: 'Habitab – Setup', titleBarStyle: 'hiddenInset',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
   });
+  setupWindow.setMenuBarVisibility(false);
   void setupWindow.loadFile(path.join(UI, 'setup.html'));
 }
 
@@ -887,8 +889,12 @@ app.whenReady().then(async () => {
     width: 1500, height: 960, minWidth: 900, minHeight: 560, title: 'Habitab',
     titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 16 },
     show: !testControl,
+    // Linux under X11; Wayland takes the icon of the desktop entry.
+    icon: process.platform === 'linux' ? path.join(UI, 'icon.png') : undefined,
     ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const, visualEffectState: 'followWindow' as const } : {}),
   });
+  // Linux, Windows: no menu bar. The menu stays, as it holds the keyboard shortcuts.
+  win.setMenuBarVisibility(false);
   manager = new SessionManager(win, upstreamUrl);
   manager.onChange = publish;
   manager.onLayout = layout;
@@ -916,8 +922,8 @@ app.whenReady().then(async () => {
     log(`window focus${recent.length ? ` (agent tools: ${recent.join(', ')})` : ''}`);
   });
   win.on('close', e => {
-    // The window hides; the app keeps serving agents until Cmd+Q.
-    if (!quitting && process.platform === 'darwin') { e.preventDefault(); win.hide(); }
+    // Closing the window quits the app. A launcher starts it again when its agent needs the browser.
+    if (!quitting) { e.preventDefault(); app.quit(); }
   });
   // Sessions of the last run come back before their launchers reconnect.
   await manager.restore();
@@ -938,7 +944,8 @@ app.whenReady().then(async () => {
     installLauncher(process.execPath, launcherJs);
     // In development the executable is Electron itself and needs the app dir.
     const args = app.isPackaged ? [] : [app.getAppPath()];
-    fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args }), { mode: 0o600 });
+    fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args, env: desktopEnv() }), { mode: 0o600 });
+    if (!testControl) installDesktopEntry({ exe: process.execPath, args }, path.join(UI, 'icon.png'), paths.home);
   } catch (e: any) { log(`launcher install failed: ${e.message}`); }
   if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, findText: () => findOpen ? findText : null, lastShare: () => lastShare, view: name => ({ sidebar, topbar, timeline, annotator, status, find, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
@@ -946,22 +953,30 @@ app.whenReady().then(async () => {
 
 app.on('second-instance', () => { win?.show(); win?.focus(); });
 app.on('activate', () => { win?.show(); });
+/** Quitting asks first when an agent called a tool in this time. */
+const BUSY_MS = 15_000;
 /** Set by a signal (e.g. Ctrl+C on `npm start`): quit without asking. */
 let quitBySignal = false;
 /** Set when the user chose a restart: quit without asking. */
 let restarting = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => { quitBySignal = true; app.quit(); });
+/** The quit question is open: a second close or Cmd+Q does not show another one. */
+let asking = false;
 app.on('before-quit', e => {
   if (quitting) return;
   e.preventDefault();
+  if (asking) return;
   void (async () => {
-    const live = [...manager.sessions.values()].filter(s => !s.ended);
-    if (live.length && !testControl && !quitBySignal && !restarting) {
+    // Ask only while an agent works: a tool call runs, or the last one ended a short time ago.
+    const busy = [...manager.sessions.values()].filter(s => !s.ended && (s.currentTool || Date.now() - (s.lastActivity ?? 0) < BUSY_MS));
+    if (busy.length && !testControl && !quitBySignal && !restarting) {
+      asking = true;
       const r = await dialog.showMessageBox({
         type: 'question', buttons: ['Quit', 'Cancel'], defaultId: 1,
-        message: `${live.length} session(s) are connected.`,
+        message: busy.length === 1 ? 'An agent is working in Habitab.' : `${busy.length} agents are working in Habitab.`,
         detail: 'Habitab opens their tabs again at the next start, and the agents continue. Cookies come back; other storage (localStorage, IndexedDB) only with a persistent profile.',
       });
+      asking = false;
       if (r.response !== 0) return;
     }
     quitting = true;

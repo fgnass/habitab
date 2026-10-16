@@ -107,7 +107,8 @@ Habitab.app (Electron)
 Why Electron: Chromium runs in the app process, so there is only one Dock icon
 and no processes that can become orphaned. Partitions, embedded views and
 docked DevTools are built in. The architecture isolates platform-specific code in
-`src/shared/platform.ts`; Linux and Windows are prepared but not tested.
+`src/shared/platform.ts`. macOS and Linux (tested on Ubuntu with GNOME) are
+supported; Windows is prepared but not tested.
 
 The launcher runs on the app's Node runtime (`ELECTRON_RUN_AS_NODE`), so no
 separate Node is needed. If the app is not installed, the launcher script runs the
@@ -120,9 +121,16 @@ git clone <repo> habitab && cd habitab
 ./install.sh
 ```
 
-The script checks Node (≥ 20) and npm, builds the app, installs it to
-`/Applications` (without write access: `~/Applications`) and starts it. The app
-then offers the MCP setup (see [Setup](#setup)). The script itself changes no
+The script checks Node (≥ 20) and npm, builds the app, installs it and starts it:
+
+- macOS: to `/Applications` (without write access: `~/Applications`).
+- Linux: to `~/.local/lib/habitab`. The app adds itself to the applications
+  (`~/.local/share/applications/habitab.desktop`). Where the system does not
+  allow user namespaces (Ubuntu 24.04 and newer), Chromium's sandbox needs its
+  setuid helper: the script asks for `sudo` once to make `chrome-sandbox` owned
+  by root with mode 4755.
+
+The app then offers the MCP setup (see [Setup](#setup)). The script itself changes no
 client configuration. The first build downloads Electron.
 
 | Option | Effect |
@@ -140,6 +148,16 @@ npm install
 npm start          # electron .
 npm run preview    # look at changes before installing: separate instance with demo projects (tests/integration/demo-site.mjs)
 npm run dist       # release/*/Habitab.app (ad-hoc signed)
+npm run dist:linux # release/linux-*-unpacked/
+```
+
+Linux: `npm start` needs the Electron binary and its sandbox helper. After
+`npm install`:
+
+```bash
+node node_modules/electron/install.js
+sudo chown root:root node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
 ```
 
 On startup the app creates the launcher script:
@@ -147,7 +165,7 @@ On startup the app creates the launcher script:
 
 ## Setup
 
-In the app: **Habitab → Setup …** (⌘,). Or from the CLI with the launcher script:
+In the app: **Habitab → Setup …** (⌘,; Linux: **Setup** in the sidebar). Or from the CLI with the launcher script:
 
 ```bash
 habitab setup            # preview

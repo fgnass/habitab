@@ -12,13 +12,17 @@ export function defaultHome(): string {
   const home = os.homedir();
   if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Habitab');
   if (platform === 'win32') return path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'Habitab');
-  return path.join(process.env.XDG_DATA_HOME ?? path.join(home, '.local', 'share'), 'habitab');
+  // Not $XDG_DATA_HOME: some clients (Codex) start MCP servers with few environment
+  // variables, and the launcher must find the same directory as the app.
+  return path.join(home, '.local', 'share', 'habitab');
 }
 
 /** Socket or named pipe of the app. AF_UNIX paths are limited to ~104 bytes. */
 export function defaultSocket(home: string): string {
   if (platform === 'win32') return `\\\\.\\pipe\\habitab-${os.userInfo().username}`;
-  const candidate = path.join(platform === 'linux' && process.env.XDG_RUNTIME_DIR ? process.env.XDG_RUNTIME_DIR : home, 'habitab.sock');
+  // The runtime directory from the uid, not from $XDG_RUNTIME_DIR (see defaultHome).
+  const runtime = `/run/user/${os.userInfo().uid}`;
+  const candidate = path.join(platform === 'linux' && fs.existsSync(runtime) ? runtime : home, 'habitab.sock');
   if (Buffer.byteLength(candidate) < 100) return candidate;
   return path.join(os.tmpdir(), `habitab-${os.userInfo().uid}.sock`);
 }
@@ -101,7 +105,17 @@ export function isAlive(pid: number): boolean {
 }
 
 /** How to start the app: the executable, plus the app directory in development. */
-export interface AppCommand { exe: string; args: string[]; }
+export interface AppCommand { exe: string; args: string[]; env?: Record<string, string>; }
+
+/**
+ * Variables the app needs to show its window on the desktop (Linux). A launcher
+ * started by a client without them still starts the app in the user's session.
+ */
+export function desktopEnv(): Record<string, string> {
+  if (platform !== 'linux') return {};
+  const keys = ['DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'DBUS_SESSION_BUS_ADDRESS', 'XAUTHORITY'];
+  return Object.fromEntries(keys.filter(k => process.env[k]).map(k => [k, process.env[k]!]));
+}
 
 /** Starts the app in the background without stealing focus. */
 export function startApp(cmd: AppCommand): void {
@@ -109,7 +123,7 @@ export function startApp(cmd: AppCommand): void {
   if (!fs.existsSync(appBundleOrExe)) return;
   if (cmd.args.length) {
     // Development: electron <app dir>
-    const env = { ...process.env };
+    const env = { ...process.env, ...cmd.env };
     delete env.ELECTRON_RUN_AS_NODE;
     spawn(appBundleOrExe, cmd.args, { detached: true, stdio: 'ignore', env }).unref();
     return;
@@ -122,7 +136,30 @@ export function startApp(cmd: AppCommand): void {
     spawn('/usr/bin/open', ['-g', '-j', ...envArgs, bundle], { detached: true, stdio: 'ignore' }).unref();
     return;
   }
-  const env = { ...process.env };
+  const env = { ...process.env, ...cmd.env };
   delete env.ELECTRON_RUN_AS_NODE;
   spawn(appBundleOrExe, [], { detached: true, stdio: 'ignore', env }).unref();
+}
+
+/**
+ * Linux: the desktop entry that gives the window its name and icon in the dock
+ * and lists Habitab among the applications. Its file name matches "desktopName"
+ * in package.json, which Electron uses as the window's app id.
+ */
+export function installDesktopEntry(cmd: AppCommand, iconPng: string, habitabHome: string): void {
+  if (platform !== 'linux') return;
+  const icon = path.join(habitabHome, 'icon.png');
+  fs.copyFileSync(iconPng, icon);
+  // Desktop entry spec: arguments with spaces or quotes in double quotes.
+  const arg = (s: string) => /[\s"'\\$`]/.test(s) ? `"${s.replace(/(["`$\\])/g, '\\$1')}"` : s;
+  const entry = [
+    '[Desktop Entry]', 'Type=Application', 'Name=Habitab', 'Comment=One home for your agent browsers',
+    `Exec=${[cmd.exe, ...cmd.args].map(arg).join(' ')}`, `Icon=${icon}`,
+    'Categories=Development;', 'StartupWMClass=habitab', 'StartupNotify=true', '',
+  ].join('\n');
+  const dir = path.join(os.homedir(), '.local', 'share', 'applications');
+  const file = path.join(dir, 'habitab.desktop');
+  try { if (fs.readFileSync(file, 'utf8') === entry) return; } catch {}
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, entry);
 }
