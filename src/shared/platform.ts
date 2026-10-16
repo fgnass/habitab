@@ -123,7 +123,7 @@ export function startApp(cmd: AppCommand): void {
   if (!fs.existsSync(appBundleOrExe)) return;
   if (cmd.args.length) {
     // Development: electron <app dir>
-    const env = { ...process.env, ...cmd.env };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...cmd.env, HABITAB_BACKGROUND: '1' };
     delete env.ELECTRON_RUN_AS_NODE;
     spawn(appBundleOrExe, cmd.args, { detached: true, stdio: 'ignore', env }).unref();
     return;
@@ -136,7 +136,8 @@ export function startApp(cmd: AppCommand): void {
     spawn('/usr/bin/open', ['-g', '-j', ...envArgs, bundle], { detached: true, stdio: 'ignore' }).unref();
     return;
   }
-  const env = { ...process.env, ...cmd.env };
+  // The window stays hidden and takes no focus (macOS: `open -g -j` above).
+  const env: NodeJS.ProcessEnv = { ...process.env, ...cmd.env, HABITAB_BACKGROUND: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   spawn(appBundleOrExe, [], { detached: true, stdio: 'ignore', env }).unref();
 }

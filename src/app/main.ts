@@ -44,6 +44,13 @@ if (!app.requestSingleInstanceLock()) app.quit();
 // work). HABITAB_TEST_VISIBLE=1 shows it, e.g. for the showcase.
 const testControl = process.env.HABITAB_TEST_CONTROL === '1';
 const testHidden = testControl && process.env.HABITAB_TEST_VISIBLE !== '1';
+/**
+ * Started by a launcher (Linux): the window stays hidden, like `open -g -j` on macOS.
+ * GNOME gives every new window the focus, also with showInactive() or minimize().
+ * Opening Habitab from the dock or the applications shows it (second-instance).
+ */
+const background = process.env.HABITAB_BACKGROUND === '1';
+delete process.env.HABITAB_BACKGROUND;
 if (testHidden && process.platform === 'darwin') app.setActivationPolicy('accessory');
 
 // Errors never block the app with a modal dialog: they go to the log and
@@ -888,7 +895,7 @@ app.whenReady().then(async () => {
   win = new BaseWindow({
     width: 1500, height: 960, minWidth: 900, minHeight: 560, title: 'Habitab',
     titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 16 },
-    show: !testControl,
+    show: !testControl && !background,
     // Linux under X11; Wayland takes the icon of the desktop entry.
     icon: process.platform === 'linux' ? path.join(UI, 'icon.png') : undefined,
     ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const, visualEffectState: 'followWindow' as const } : {}),
