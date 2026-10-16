@@ -264,7 +264,16 @@ launcher crash, app restart.
   after a rebuild of the ad-hoc signed app, LAN requests may fail with "No route
   to host" and no dialog; turn Habitab off and on again in System Settings →
   Privacy & Security → Local Network.
-- Linux/Windows: prepared, not tested. App ad-hoc signed, not notarized.
+- Closing the window quits Habitab; it asks first only while an agent works
+  (a tool call in the last 15 s). An agent that needs the browser starts the
+  app again, and the tabs come back.
+- Shortcuts in this README are the macOS ones. On Linux, Ctrl takes the place
+  of ⌘ (DevTools: Ctrl+Shift+I, show sidebar: Ctrl+Shift+S, back/forward:
+  Alt+←/→); the app shows the Linux keys.
+- Linux: tested on Ubuntu 26.04 with GNOME (Wayland). No menu bar (its
+  shortcuts work). When an agent starts the app, it stays hidden until you open
+  Habitab, as GNOME would give the new window the focus. Web Share is macOS only.
+- Windows: prepared, not tested. macOS: app ad-hoc signed, not notarized.
 
 The earlier Swift version (headless + screencast) is in `archive/swift-headless/`.
 
