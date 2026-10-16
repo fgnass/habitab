@@ -36,7 +36,13 @@ function passThrough(argv: string[]): void {
   child.on('error', e => { process.stderr.write(`habitab: ${e.message}\n`); process.exit(127); });
 }
 
-interface Inflight { tool: string; start: number; }
+interface Inflight {
+  tool: string;
+  start: number;
+  /** The call as sent to the server, for one retry with a new page id. */
+  request?: any;
+  retried?: boolean;
+}
 
 class Launcher {
   readonly session = newSessionId();
@@ -57,6 +63,16 @@ class Launcher {
   private lastClaudeCheck = Date.now();
   /** The codex executable that has `codex queue`. */
   private codexBin?: string;
+  /**
+   * Page ids the agent saw, with their URLs. After an app restart the server
+   * reconnects and gives the restored tabs new ids; the agent still uses the
+   * old ones. They are translated here (old id -> new id).
+   */
+  private knownPages = new Map<number, string>();
+  private pageIds = new Map<number, number>();
+  /** Calls of the launcher itself to the server: id -> handler of the answer. */
+  private ownCalls = new Map<string, (msg: any) => void>();
+  private nextOwnCall = 1;
 
   constructor(private original: string[], private cmd: ServerCommand) {
     this.meta = { ...collectMeta(), originalCommand: original, serverName: process.env.HABITAB_SERVER_NAME };
@@ -138,7 +154,7 @@ class Launcher {
   }
 
   private pumps(): void {
-    lines(process.stdin, line => { if (!this.inspectClient(line)) this.child.stdin?.write(line); });
+    lines(process.stdin, raw => { const line = this.mapPageId(raw); if (!this.inspectClient(line)) this.child.stdin?.write(line); });
     process.stdin.on('end', () => {
       log('stdin EOF');
       this.child.stdin?.end();
@@ -186,7 +202,7 @@ class Launcher {
         this.applyCallMeta(msg.params?._meta);
         this.refreshClaudeSession();
         if (key) {
-          this.inflight.set(key, { tool, start: Date.now() });
+          this.inflight.set(key, { tool, start: Date.now(), request: typeof msg.params?.arguments?.pageId === 'number' ? msg : undefined });
           this.link.send({ type: 'toolStart', callId: key, tool, summary: summarize(msg.params?.arguments ?? {}) });
         }
         if (this.held) { this.heldLines.push(line); hold = true; }
@@ -207,6 +223,8 @@ class Launcher {
     for (const msg of parse(line)) {
       const key = idKey(msg.id);
       if (!key) continue;
+      const own = this.ownCalls.get(key);
+      if (own && !msg.method) { this.ownCalls.delete(key); own(msg); return Buffer.alloc(0); }
       if (this.toolsListIds.delete(key) && Array.isArray(msg.result?.tools) && !Array.isArray(JSON.parse(line.toString('utf8')))) {
         msg.result.tools.push(FEEDBACK_TOOL);
         return Buffer.from(JSON.stringify(msg) + '\n');
@@ -224,11 +242,79 @@ class Launcher {
       if (msg.method === 'roots/list') { this.rootsRequests.add(key); continue; }
       const call = this.inflight.get(key);
       if (!call || msg.method) continue;
-      this.inflight.delete(key);
+      this.notePages(msg.result);
       const isError = !!msg.error || !!msg.result?.isError;
       const detail = isError ? String(msg.error?.message ?? msg.result?.content?.[0]?.text ?? '').slice(0, 300) : undefined;
+      if (isError && call.request && !call.retried && /No page found/.test(JSON.stringify(msg.error ?? msg.result?.content ?? '')) && this.knownPages.has(call.request.params.arguments.pageId)) {
+        void this.retryWithNewPageId(call, line);
+        return Buffer.alloc(0);
+      }
+      this.inflight.delete(key);
       this.link.send({ type: 'toolEnd', callId: key, tool: call.tool, isError, durationMs: Date.now() - call.start, detail });
     }
+  }
+
+  // MARK: Page ids after an app restart
+
+  /** Replaces an old page id in a tool call with the id the restored tab has now. */
+  private mapPageId(line: Buffer): Buffer {
+    if (!this.pageIds.size) return line;
+    const msgs = parse(line);
+    const args = msgs.length === 1 && msgs[0].method === 'tools/call' ? msgs[0].params?.arguments : undefined;
+    if (typeof args?.pageId !== 'number' || !this.pageIds.has(args.pageId)) return line;
+    let id = args.pageId;
+    while (this.pageIds.has(id)) id = this.pageIds.get(id)!;
+    log(`page id ${args.pageId} -> ${id}`);
+    args.pageId = id;
+    return Buffer.from(JSON.stringify(msgs[0]) + '\n');
+  }
+
+  /** Remembers the pages of a tool result (its "## Pages" list). */
+  private notePages(result: any): { id: number; url: string }[] | undefined {
+    const text = (result?.content ?? []).filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('\n');
+    const block = text.match(/^## Pages\n((?:\d+: .*(?:\n|$))+)/m)?.[1];
+    if (!block) return undefined;
+    const pages = block.split('\n').filter(Boolean).map((l: string) => {
+      const label = l.replace(/^\d+: /, '').replace(/( \[selected\])?( isolatedContext=\S+)?$/, '');
+      return { id: +l.match(/^\d+/)![0], url: label.match(/\((\S+)\)$/)?.[1] ?? label };
+    });
+    for (const p of pages) this.knownPages.set(p.id, p.url);
+    return pages;
+  }
+
+  /**
+   * The server answered "No page found" for a page id the agent got from it:
+   * it reconnected (app restart) and the restored tabs have new ids. Lists the
+   * pages, pairs old and new ids by URL (in order) and sends the call again.
+   */
+  private async retryWithNewPageId(call: Inflight, errorLine: Buffer): Promise<void> {
+    call.retried = true;
+    const listed = await this.ownCall({ name: 'list_pages', arguments: {} });
+    const pages = this.notePages(listed?.result) ?? [];
+    const current = new Set(pages.map(p => p.id));
+    const taken = new Set([...this.pageIds.values()]);
+    for (const [old, url] of [...this.knownPages].sort((a, b) => a[0] - b[0])) {
+      if (current.has(old) || this.pageIds.has(old)) continue;
+      const now = pages.find(p => p.url === url && !taken.has(p.id) && p.id > old);
+      if (now) { this.pageIds.set(old, now.id); taken.add(now.id); }
+    }
+    const before = call.request.params.arguments.pageId;
+    const retry = this.mapPageId(Buffer.from(JSON.stringify(call.request) + '\n'));
+    if (parse(retry)[0]?.params?.arguments?.pageId === before) {
+      // No restored tab for it: the agent gets the server's answer.
+      process.stdout.write(this.inspectServer(errorLine) ?? errorLine);
+      return;
+    }
+    this.child.stdin?.write(retry);
+  }
+
+  private ownCall(params: object): Promise<any> {
+    const id = `habitab-${this.nextOwnCall++}`;
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { this.ownCalls.delete(`s:${id}`); resolve(undefined); }, 30_000);
+      this.ownCalls.set(`s:${id}`, msg => { clearTimeout(timer); resolve(msg); });
+      this.child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params }) + '\n');
+    });
   }
 
   /** Codex sends _meta.threadId with every tools/call. */

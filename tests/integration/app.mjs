@@ -624,6 +624,8 @@ await dr.initialize();
 await dr.tool('navigate_page', { pageId: await pageId(dr), url: `${base}/delta` });
 await dr.tool('evaluate_script', { pageId: await pageId(dr), function: '() => { document.cookie = "token=abc"; return 1 }' });
 await dr.tool('new_page', { url: `${base}/delta-2` });
+// The page id the agent knows for /delta (the server gives new ids after the restart).
+const deltaIdBefore = +((await dr.tool('list_pages')).text.match(/^(\d+):.*\/delta\b(?!-)/m)?.[1] ?? 0);
 const sdBefore = (await state()).sessions.find(s => s.project === 'epsilon');
 await control(`select ${sdBefore.id}`);
 await sleep(1200);
@@ -640,6 +642,9 @@ await control(`select ${sdBefore.id}`);
 const tlFrontAfter = (await state()).sessions.find(s => s.id === sdBefore.id).timeline.map(x => x.id);
 check(tlFront.length && tlFrontAfter.join() === tlFront.join(), 'app restart: the front tab keeps its own timeline', JSON.stringify([tlFront, tlFrontAfter]));
 await sleep(2500);
+// The agent goes on with its old page id: the launcher sends it to the restored tab.
+const deltaOld = await dr.tool('evaluate_script', { pageId: deltaIdBefore, function: '() => location.pathname' });
+check(deltaIdBefore && !deltaOld.isError && deltaOld.text.includes('"/delta"'), 'app restart: the old page id reaches the restored tab', deltaOld.text.replace(/\n/g, ' | ').slice(0, 200));
 const dPages = await dr.tool('list_pages');
 check(dPages.text.includes('/delta-2') && dPages.text.includes('/delta'), 'app restart: the agent sees its restored tabs', dPages.text.replace(/\n/g, ' | ').slice(0, 200));
 const dCookie = (await dr.tool('evaluate_script', { pageId: +(dPages.text.match(/^(\d+):.*\/delta\b/m)?.[1] ?? 1), function: '() => document.cookie' })).text;
