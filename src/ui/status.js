@@ -56,7 +56,6 @@ const wide = (text, cls = '') => el('div', `wide ${cls}`, text);
 
 function stateText(s) {
   if (!s) return '';
-  if (s.feedback) return `The agent waits for your feedback${s.feedback.question ? `: ${s.feedback.question}` : ''}`;
   if (s.held && !s.currentTool) return 'You have control: the agent’s next tool calls wait';
   return s.protectedBy ?? '';
 }
@@ -93,7 +92,7 @@ function render() {
   const more = group ? group.steps.length - 1 : 0;
   const hasDetails = !!group && (more > 0 || group.steps.some(x => details(x).length));
   if (!hasDetails) pop = false;
-  const key = JSON.stringify([open, pop, state.notice, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held]);
+  const key = JSON.stringify([open, pop, state.notice, state.annotating, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held]);
   if (key === shown) return;
   shown = key;
   document.body.classList.toggle('open', open);
@@ -103,13 +102,15 @@ function render() {
   // One line, always: the chosen change's first call, else what happens now.
   // No durations here: they are for looking back (details, screenshot).
   let cells;
-  if (chosen) cells = lineCells(chosen.head);
+  // Marking mode: how it works, in place of the agent's call.
+  if (state.annotating) cells = [wide((state.timelinePreview ? 'Mark an area of this earlier screenshot' : 'Mark an area of the page') + (s?.held ? ' · the agent waits' : ''), 'hint'), el('span', 'state esc', 'Esc to cancel')];
+  else if (chosen) cells = lineCells(chosen.head);
   else if (state.notice) cells = [wide(state.notice, 'notice')];
   else if (current) cells = lineCells(current, s.held ? 'held' : 'running');
   else if (stateText(s)) cells = [wide(stateText(s))];
   else if (latest) cells = lineCells(latest);
   else cells = [wide(s ? 'No tool calls yet' : '', 'quiet')];
-  chip.classList.toggle('show', hasDetails);
+  chip.classList.toggle('show', hasDetails && !state.annotating);
   chip.classList.toggle('on', pop);
   chip.firstChild.textContent = more ? `+${more}` : 'Details';
   chip.title = more ? `All ${calls(more + 1)} of this change, with scripts and errors` : 'Script and error of this call';

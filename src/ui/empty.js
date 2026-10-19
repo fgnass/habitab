@@ -43,7 +43,7 @@ api.onState(state => {
     : 'The browser opens as soon as the agent first needs it.';
   const rows = [
     ['Project', s.projectPath],
-    ['Client', [s.clientName, s.clientVersion].filter(Boolean).join(' ') || 'not reported'],
+    ['Client', (window.CLIENT_NAMES ?? {})[s.client] ?? s.client ?? 'not reported'],
     ['Agent-Session', s.agentSessionId ? `${s.agentSessionId} (${SOURCES[s.agentSessionSource] ?? s.agentSessionSource})` : 'not reported'],
     ['Habitab-Session', s.id],
   ];
@@ -60,6 +60,9 @@ api.onState(state => {
 let emu = null, frame = null, drag = null, pending = null;
 api.onState(state => {
   const s = state.sessions.find(x => x.id === state.selected);
+  const f = s?.nav?.frame;
+  $('edge').classList.toggle('on', !!f);
+  if (f) Object.assign($('edge').style, { left: f.x + 'px', top: f.y + 'px', width: f.width + 'px', height: f.height + 'px' });
   emu = s?.nav?.emulation?.by === 'user' ? s.nav.emulation : null;
   frame = emu ? s.nav.frame : null;
   document.body.classList.toggle('resizable', !!frame);

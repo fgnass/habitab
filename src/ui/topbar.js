@@ -21,6 +21,8 @@ api.onState(state => {
   if (size) $('sizeText').textContent = `${size.width}×${size.height}`;
   const live = s && s.phase !== 'ended' && s.phase !== 'kept';
   $('hold').classList.toggle('hidden', !live);
+  // Shown while the agent waits for the user: continue in an own tab and let it go on.
+  $('fork').classList.toggle('hidden', !live || !s?.held || !nav || !!nav.own);
   $('hold').classList.toggle('held', !!s?.held);
   const auto = s?.autoResumeIn != null;
   $('hold').classList.toggle('auto', auto);
@@ -44,16 +46,15 @@ api.onState(state => {
       : "This page uses a lot of CPU. The agent's debugger slows down WebAssembly and audio worklets. Click to pause it while you test (for all tabs of this project).";
   }
   // Console errors of the page: the button opens the console, its context menu sends them.
-  const n = nav?.problems?.length ?? 0;
+  const n = nav?.newProblems ?? 0;
   $('problems').classList.toggle('hidden', !n);
   $('problemsText').textContent = String(n);
-  $('problems').title = `${n} console error${n > 1 ? 's' : ''} on this page. Click to open the console (⇧⌘E); right-click to send them to the agent.`;
+  $('problems').title = `${n} new console error${n > 1 ? 's' : ''} on this page. Click to open the console (⇧⌘E); right-click to send them to the agent.`;
   $('devtools').disabled = !nav;
   $('responsive').disabled = !nav;
   $('annotate').disabled = !nav;
   $('annotate').classList.toggle('on', !!state.annotating);
-  $('annotate').classList.toggle('waiting', !!s?.feedback && !state.annotating);
-  $('annotate').title = s?.feedback ? `The agent asks: ${s.feedback.question || 'mark an area'} (⇧⌘A)` : 'Mark an area for the agent (⇧⌘A)';
+  $('annotate').title = 'Mark an area for the agent (⇧⌘A)';
   $('responsive').classList.toggle('on', !!nav?.emulation);
   $('devtools').classList.toggle('on', !!s?.devtools);
 });
@@ -84,6 +85,7 @@ $('sidebar').onclick = () => api.action('sidebar');
 $('responsive').onclick = () => api.action('responsive');
 $('annotate').onclick = () => api.action('annotate');
 $('hold').onclick = () => api.action('hold');
+$('fork').onclick = () => api.action('fork');
 $('debugger').onclick = () => api.action('debugger');
 $('problems').onclick = () => api.action('problems');
 $('problems').oncontextmenu = e => { e.preventDefault(); api.action('problemsMenu', null, null, Math.round(e.clientX), Math.round(e.clientY)); };

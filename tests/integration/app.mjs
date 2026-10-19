@@ -1,6 +1,9 @@
-// End-to-end test: Habitab app + launcher + unchanged chrome-devtools-mcp.
+// End-to-end test: Habitab app + unchanged chrome-devtools-mcp, which starts
+// the browser bridge through the server's global config (bridge-env.mjs).
+// Shell scripts named "claude" stand in for the clients; a fake Claude Code
+// inbox socket receives the feedback notes.
 //   npm run build && node tests/integration/app.mjs
-// Uses its own HABITAB_HOME and socket; a real installation is not touched.
+// Uses its own HABITAB_HOME, socket and server config; a real installation is not touched.
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -9,26 +12,49 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import readline from 'node:readline';
+import { bridgeEnv, fakeClient } from './bridge-env.mjs';
 import { McpClient, sleep, check } from './mcp-client.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
 // The Electron binary itself: killing the .bin wrapper would leave the app running.
 const electronBin = createRequire(import.meta.url)('electron');
 const tmp = fs.mkdtempSync(path.join(process.env.TEST_TMP ?? os.tmpdir(), 'hb-app-'));
-const env = {
-  HABITAB_HOME: path.join(tmp, 'home'),
-  HABITAB_SOCKET: process.env.HABITAB_SOCKET ?? path.join(os.tmpdir(), `hb-${process.pid}.sock`),
-  HABITAB_NO_APP_LAUNCH: '1',
-  HABITAB_TEST_CONTROL: '1',
+const env = bridgeEnv(tmp, {
   ...(process.env.HABITAB_TEST_VISIBLE ? { HABITAB_TEST_VISIBLE: process.env.HABITAB_TEST_VISIBLE } : {}),
   HABITAB_AUTO_RESUME_MS: '2500',
-  CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1',
-  // Tests may run inside a Claude Code session: its inbox must never get test messages.
-  CLAUDE_CODE_MESSAGING_SOCKET: '',
-  CLAUDE_CODE_MESSAGING_TOKEN: '',
-  HABITAB_CODEX_COMMAND: '',
+});
+// Fake Claude Code inbox socket (cross-session messaging): feedback notes arrive here.
+const inboxPath = path.join(tmp, 'inbox.sock');
+const inboxLines = [];
+const inbox = net.createServer(sock => {
+  let buf = '';
+  sock.on('data', c => { buf += c; let i; while ((i = buf.indexOf('\n')) >= 0) { try { inboxLines.push(JSON.parse(buf.slice(0, i))); } catch {} buf = buf.slice(i + 1); } });
+});
+await new Promise(r => inbox.listen(inboxPath, r));
+const claudeEnv = { ...env, CLAUDE_CODE_MESSAGING_SOCKET: inboxPath, CLAUDE_CODE_MESSAGING_TOKEN: 'test-token' };
+/**
+ * The next feedback note in the inbox, in the shape of the old tool result
+ * (text, and the image file as an image content). Call it before the action.
+ */
+const nextNote = () => {
+  const n = inboxLines.filter(l => l.type === 'user').length;
+  return (async () => {
+    for (let i = 0; i < 100; i++) {
+      const notes = inboxLines.filter(l => l.type === 'user');
+      if (notes.length > n) {
+        const text = notes[n].message.content;
+        const png = text.match(/(\/\S+\.png)/)?.[1];
+        const content = [{ type: 'text', text }];
+        if (png && fs.existsSync(png)) content.push({ type: 'image', data: fs.readFileSync(png).toString('base64') });
+        return { text, raw: { result: { content } }, isError: false };
+      }
+      await sleep(100);
+    }
+    return { text: 'NO NOTE', raw: { result: { content: [] } }, isError: true };
+  })();
 };
-const launcher = ['node', path.join(root, 'dist/launcher/main.js'), 'mcp', '--', 'npx', '-y', 'chrome-devtools-mcp@latest', '--isolated'];
+// Real agents think between tool calls; steps come from the CDP commands, and calls without a pause join into one.
+const pause = () => sleep(900);
 // Chrome processes (a Chrome that chrome-devtools-mcp would start); pgrep fails when there is none.
 const chromePids = () => {
   // Linux: the executable only (Habitab's own profiles live in a "chromium" folder).
@@ -67,6 +93,12 @@ const page = http.createServer((req, res) => {
   if (req.url === '/broken') return res.end(`<title>Broken</title><h1 id=h>Broken</h1><script>
     console.error('Oops ' + 'twice'); console.error('Oops ' + 'twice'); fetch('/api/fail');
     setTimeout(() => { throw new Error('Boom'); });</script>`);
+  // Web Speech: go() starts a recognition and logs its events (results as index:transcripts, final ones with "!").
+  if (req.url === '/speech') return res.end(`<title>Speech</title><script>window.early = typeof webkitSpeechRecognition; window.log = [];
+    window.go = opts => { const r = new SpeechRecognition(); Object.assign(r, opts); window.rec = r; log.length = 0;
+      for (const t of ['start', 'audiostart', 'soundstart', 'speechstart', 'result', 'nomatch', 'speechend', 'soundend', 'audioend', 'error', 'end'])
+        r.addEventListener(t, e => log.push(t + (t === 'result' ? ':' + e.resultIndex + ':' + [...e.results].map(x => (x.isFinal ? '!' : '') + x[0].transcript).join('/') : t === 'error' ? ':' + e.error : '')));
+      r.onend = () => log.push('onend'); r.start(); };</script>`);
   // Web Share: a full-page button shares title, text, a relative URL and a file; the result lands in window.r.
   if (req.url === '/share') return res.end(`<title>Share</title><script>window.early = typeof navigator.share</script>
     <button style="position:fixed;inset:0" onclick="navigator.share({ title: 'T', text: 'Hello', url: '/x', files: [new File(['hi'], 'a.txt', { type: 'text/plain' })] }).then(() => window.r = 'resolved', e => window.r = e.name)">Share</button>`);
@@ -80,8 +112,9 @@ await new Promise(r => page.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${page.address().port}`;
 
 const project = name => { const d = path.join(tmp, name); fs.mkdirSync(path.join(d, '.git'), { recursive: true }); return d; };
-const client = (name, clientName) => {
-  const c = new McpClient(launcher[0], launcher.slice(1), { env, cwd: project(name), clientName });
+// A session: the server below a script named like the client, in its own process group.
+const client = (name, kind = 'claude') => {
+  const c = new McpClient(fakeClient(env, kind), [], { env: kind === 'claude' ? claudeEnv : env, cwd: project(name), detached: true });
   c.project = name;
   return c;
 };
@@ -90,18 +123,16 @@ const pageId = async c => +((await c.tool('list_pages')).text.match(/^(\d+):.*\[
 startApp();
 const ready = await waitFor(e => e.ready);
 check(!!ready, 'app starts', `Chromium ${ready?.chrome}`);
-const a = client('alpha-shop', 'claude-code'), b = client('beta-api', 'codex-mcp-client');
+const a = client('alpha-shop'), b = client('beta-api');
 const [initA] = await Promise.all([a.initialize(), b.initialize()]);
-check(/never by its pageId/.test(initA.result?.instructions ?? '') && initA.result?.serverInfo, 'launcher adds tab naming instructions to the server answer', (initA.result?.instructions ?? '').slice(0, 80));
+check(initA.result?.serverInfo?.name, 'the servers start unchanged, without a launcher', `${initA.result?.serverInfo?.name} ${initA.result?.serverInfo?.version}`);
+// The server starts its browser (and with it the bridge, which registers the session) with the first tool call.
+check((await state()).sessions.length === 0, 'lazy: no session before the first tool call');
+await Promise.all([a.tool('navigate_page', { pageId: await pageId(a), url: `${base}/alpha` }), b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` })]);
 let sa = await sessionOf(a), sb = await sessionOf(b);
 check(sa && sb && sa.id !== sb.id, 'two sessions registered');
-check(!sa.browser && sa.tabs.length === 0, 'lazy: no browser before the first tool call');
-check(sa.client === 'claude' && sb.client === 'codex', 'client from clientInfo', `${sa.client}/${sb.client}`);
-
-await Promise.all([a.tool('navigate_page', { pageId: await pageId(a), url: `${base}/alpha` }), b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` }, { threadId: 'thread-123' })]);
-sa = await sessionOf(a); sb = await sessionOf(b);
+check(sa.client === 'claude' && sb.client === 'claude', 'client from the process tree', `${sa.client}/${sb.client}`);
 check(sa.browser && sa.tabs.some(t => t.url.endsWith('/alpha')), 'session A shows its page in the app');
-check(sb.agentSessionId === 'thread-123', 'Codex thread id from _meta', sb.agentSessionSource);
 const la = (await a.tool('list_pages')).text, lb = (await b.tool('list_pages')).text;
 check(!la.includes('/beta') && !lb.includes('/alpha'), 'each agent sees only its own tabs');
 const pa = await pageId(a), pb = await pageId(b);
@@ -239,25 +270,37 @@ await sleep(300);
 check((await state()).sessions.find(s => s.id === sb.id).held, 'a key press after a click takes control');
 await control(`hold ${sb.id} off`);
 
-// Feedback tool: listed, waits for the user's marked area; never held back
-const toolList = await b.request('tools/list', {});
-check(toolList.result?.tools?.some(t => t.name === 'wait_for_user_feedback'), 'feedback tool added to the tool list');
+// Own tab: the user goes on in a copy of the page, the agent in its tab
+const agentPage = await pageId(b);
+await control(`userclick ${sb.id}`);
+await sleep(300);
+const agentUrl = (await state()).sessions.find(s => s.id === sb.id).nav.url;
+await control(`action ${sb.id} fork`);
+await sleep(800);
+const forked = (await state()).sessions.find(s => s.id === sb.id);
+const ownTab = forked.tabs.find(t => t.active);
+check(!forked.held && ownTab?.own && ownTab.url === agentUrl && forked.tabs.length >= 2, 'own tab opens the same page in front and lets the agent go on', JSON.stringify({ held: forked.held, own: ownTab?.own, url: ownTab?.url }));
+await control(`userclick ${sb.id}`);
+await sleep(300);
+check(!(await state()).sessions.find(s => s.id === sb.id).held, 'a click in the own tab does not hold the agent');
+let ownDone = false;
+const ownCall = b.tool('evaluate_script', { pageId: agentPage, function: '() => 44' }).then(r => { ownDone = true; return r; });
+await sleep(1000);
+check(ownDone && (await ownCall).text.includes('44') && await pageId(b) === agentPage, 'agent works on in its own page, its selection stays');
+await control(`closetab ${sb.id}`);
+await sleep(500);
+
+// Feedback: the agent gets a note with the details and the image file (Claude Code inbox); also while held
+check((await state()).sessions.find(s => s.id === sb.id).push === true, 'feedback can be pushed to the session (inbox socket from the environment)');
 await control(`hold ${sb.id} on`);
-const asked = b.tool('wait_for_user_feedback', { question: 'Which part?', timeout_seconds: 60 });
-let fbState;
-for (let i = 0; i < 30 && !fbState; i++) { await sleep(100); fbState = (await state()).sessions.find(s => s.id === sb.id).feedback; }
-check(fbState?.question === 'Which part?', 'Habitab shows the question of the waiting agent (also while held)', JSON.stringify(fbState));
+const asked = nextNote();
 await control(`action ${sb.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 300, "height": 120}, "text": "This heading please"}`);
 const answer = await asked;
-check(answer.text.includes('This heading please') && answer.text.includes('Elements in the area') && answer.raw.result.content.some(c => c.type === 'image' && c.data.length > 100),
-  'feedback tool returns comment, elements and the area as image', answer.text.replace(/\n/g, ' | ').slice(0, 200));
+check(answer.text.includes('This heading please') && /Marked: h1 "\/beta"/.test(answer.text) && answer.raw.result.content.some(c => c.type === 'image' && c.data.length > 100),
+  'the note has the comment, the elements and the area as an image file', answer.text.replace(/\n/g, ' | ').slice(0, 200));
+check(inboxLines[0]?.type === 'auth' && inboxLines[0].token === 'test-token', 'inbox: the message authenticates with the session token');
 await control(`hold ${sb.id} off`);
-await control(`action ${sb.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 100, "height": 50}, "text": "Copy me"}`);
-await sleep(600);
-check((await state()).clipboard?.includes('Copy me') && (await state()).sessions.find(s => s.id === sb.id).feedbackQueued === 1, 'without a waiting agent the area is kept (and copied to the clipboard)');
-const queued = await b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(queued.text.includes('Copy me') && queued.text.includes('Do not call wait_for_user_feedback again') && queued.raw.result.content.some(c => c.type === 'image'),
-  'the next feedback call returns kept feedback at once, with the hint not to wait again', queued.text.replace(/\n/g, ' | ').slice(0, 160));
+check(!(await state()).clipboard?.includes('This heading'), 'nothing is copied to the clipboard when the note was delivered');
 
 // Problems: console errors per tab (failed requests as the console reports them), sent to the agent like feedback
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/broken` });
@@ -267,16 +310,15 @@ const probs = tb.nav?.problems ?? [];
 check(probs.length === 3 && probs.find(p => p.text.includes('Oops twice'))?.count === 2 && probs.some(p => p.text.includes('Boom')) && probs.some(p => /500/.test(p.text) && p.source?.includes('/api/fail')),
   'problems: console errors (repeats counted), uncaught exceptions and failed requests as the console reports them', JSON.stringify(probs.map(p => [p.text.slice(0, 40), p.source, p.count])));
 check(tb.tabs.find(t => t.active)?.problems === 3, 'problems: the tab has an error count for its badge');
-const askedP = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).feedback; i++) await sleep(100);
+const askedP = nextNote();
 await control(`action ${sb.id} problemsSend [${probs.find(p => p.text.includes('Boom')).id}]`);
 const answerP = await askedP;
 check(answerP.text.includes('Console error') && answerP.text.includes('Boom') && answerP.text.includes('not from the user') && !answerP.text.includes('Oops'),
-  'problems: a single error goes to the waiting agent', answerP.text.replace(/\n/g, ' | ').slice(0, 200));
+  'problems: a single error goes to the agent', answerP.text.replace(/\n/g, ' | ').slice(0, 200));
+const allP = nextNote();
 await control(`action ${sb.id} problemsSend`);
-await sleep(300);
-const queuedP = await b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(queuedP.text.includes('3 console errors') && queuedP.text.includes('(2×)') && queuedP.text.includes('Boom'), 'problems: "Send All" is kept for the next feedback call', queuedP.text.replace(/\n/g, ' | ').slice(0, 200));
+const queuedP = await allP;
+check(queuedP.text.includes('3 console errors') && queuedP.text.includes('(2×)') && queuedP.text.includes('Boom'), 'problems: "Send All" goes to the agent as one note', queuedP.text.replace(/\n/g, ' | ').slice(0, 200));
 
 // Find in page: the query shows in the bar; matches are counted on a focused page
 await control(`select ${sb.id}`);
@@ -300,16 +342,14 @@ let consoleShown;
 for (let i = 0; i < 30 && consoleShown !== true; i++) { consoleShown = (await uiEval('devtools', '!!document.querySelector(".console-view")'))?.result; if (consoleShown !== true) await sleep(100); }
 check((await state()).sessions.find(s => s.id === sb.id).devtools && hooked === 'hooked' && consoleShown === true,
   'error badge opens the DevTools on the Console panel, with the Send-to-Agent hook installed', JSON.stringify({ hooked, consoleShown }));
-const askedD = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).feedback; i++) await sleep(100);
+const askedD = nextNote();
 // The frontend reports the chosen item as a console line (the native menu itself cannot be clicked here).
 await uiEval('devtools', 'console.log("HABITAB_SEND " + JSON.stringify({ text: "Uncaught Error: Boom (from the console)" }))');
 const answerD = await askedD;
 check(answerD.text.includes('from the DevTools') && answerD.text.includes('Boom (from the console)') && answerD.text.includes('/broken'),
-  'a DevTools selection goes to the waiting agent with the page URL', answerD.text.replace(/\n/g, ' | ').slice(0, 200));
+  'a DevTools selection goes to the agent with the page URL', answerD.text.replace(/\n/g, ' | ').slice(0, 200));
 // Without a selection, the item sends the console message under the pointer (the native menu is not shown in tests)
-const askedM = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).feedback; i++) await sleep(100);
+const askedM = nextNote();
 const rightClicked = (await uiEval('devtools', `(() => {
   const all = (root, out = []) => { for (const e of root.querySelectorAll('*')) { if (e.classList.contains('console-message-wrapper')) out.push(e); if (e.shadowRoot) all(e.shadowRoot, out); } return out; };
   const m = all(document).find(e => e.classList.contains('console-error-level'));
@@ -335,14 +375,109 @@ const clip = await b.tool('evaluate_script', { pageId: await pageId(b), function
 check(clip.text.includes('"prompt"') || clip.text.includes('"denied"'), 'clipboard: reading is not granted without an answer', clip.text.replace(/\n/g, ' | ').slice(0, 160));
 
 // Clearing the console (here the page calls console.clear()) drops the error badge too
-check((await state()).sessions.find(s => s.id === sb.id).tabs.find(t => t.active)?.problems === 3, 'problems: badge shows 3 before the console is cleared');
+// (The DevTools are open here, so the badge itself shows nothing: see below.)
+check((await state()).sessions.find(s => s.id === sb.id).nav.problems.length === 3, 'problems: 3 errors before the console is cleared');
 await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => { console.clear(); return 1; }' });
 let cleared = false;
-for (let i = 0; i < 40 && !cleared; i++) { await sleep(100); cleared = (await state()).sessions.find(s => s.id === sb.id).tabs.find(t => t.active)?.problems === 0; }
-check(cleared, 'problems: clearing the console drops the error badge');
+for (let i = 0; i < 40 && !cleared; i++) { await sleep(100); cleared = (await state()).sessions.find(s => s.id === sb.id).nav.problems.length === 0; }
+check(cleared, 'problems: clearing the console drops the errors');
 await control(`devtools ${sb.id}`);
+// Web Speech API: Electron has the interface, but no recognizer (start() fails with "network"); Habitab recognizes
+// speech on this computer (macOS). Tests use a fake recognizer: the results come from the test control.
+if (process.platform === 'darwin') {
+  await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/speech` });
+  const pid = await pageId(b);
+  const logOf = async () => { const t = (await b.tool('evaluate_script', { pageId: pid, function: '() => log.join(" ")' })).text; try { return JSON.parse(t.match(/```json\s*([\s\S]*?)```/)?.[1] ?? t); } catch { return t; } };
+  const until = async (what, ms = 5000) => { const end = Date.now() + ms; let l = ''; while (Date.now() < end) { l = await logOf(); if (l.includes(what)) return l; await sleep(100); } return l; };
+  const detect = await b.tool('evaluate_script', { pageId: pid, function: '() => SpeechRecognition.available({ langs: ["en-US"], processLocally: true }).then(a => [window.early, SpeechRecognition === webkitSpeechRecognition, a].join(","))' });
+  check(detect.text.includes('function,true,available'), 'web speech: SpeechRecognition exists before page scripts; recognition is available on this computer', detect.text.replace(/\n/g, ' | ').slice(0, 120));
+  // Without microphone access for the origin the page gets "not-allowed" (tests show no sheet).
+  await b.tool('evaluate_script', { pageId: pid, function: '() => go({})' });
+  let l = await until('end');
+  check(l === 'start error:not-allowed end onend', 'web speech: without microphone access the recognition ends with "not-allowed"', l);
+  await control(`access ${sb.id} media ${base} allow`);
+  // Interim results, one final result ends a non-continuous recognition.
+  await b.tool('evaluate_script', { pageId: pid, function: '() => go({ interimResults: true })' });
+  await until('audiostart');
+  await control('speech interim hello');
+  await control('speech final hello world');
+  l = await until('onend');
+  check(l === 'start audiostart soundstart speechstart result:0:hello result:0:!hello world speechend soundend audioend end onend',
+    'web speech: events of the spec in order, interim then final result; the recognition ends after a final result', l);
+  // Continuous: final results add up, interim ones stay out without interimResults; abort() reports "aborted".
+  await b.tool('evaluate_script', { pageId: pid, function: '() => go({ continuous: true })' });
+  await until('audiostart');
+  await control('speech final one');
+  await control('speech interim tw');
+  await control('speech final two');
+  await until('result:1');
+  await b.tool('evaluate_script', { pageId: pid, function: '() => rec.abort()' });
+  l = await until('onend');
+  check(l === 'start audiostart soundstart speechstart result:0:!one result:1:!one/!two error:aborted speechend soundend audioend end onend',
+    'web speech: continuous results add up; abort() ends with "aborted"', l);
+  // A second start() throws like Chrome; a second recognition ends the first one (one microphone).
+  const twice = await b.tool('evaluate_script', { pageId: pid, function: '() => { go({ continuous: true }); try { rec.start(); return "no error"; } catch (e) { return e.name; } }' });
+  check(twice.text.includes('InvalidStateError'), 'web speech: start() twice throws InvalidStateError', twice.text.slice(0, 80));
+  await until('audiostart');
+  const first = await b.tool('evaluate_script', { pageId: pid, function: '() => { window.r1 = rec; window.r1log = []; r1.onerror = e => r1log.push(e.error); r1.onend = () => r1log.push("end"); go({}); return "ok"; }' });
+  await until('audiostart');
+  const r1log = await b.tool('evaluate_script', { pageId: pid, function: '() => r1log.join(" ")' });
+  check(first.text.includes('ok') && r1log.text.includes('aborted end'), 'web speech: a new recognition ends the running one with "aborted"', r1log.text.slice(0, 80));
+  await b.tool('evaluate_script', { pageId: pid, function: '() => rec.abort()' });
+  await until('onend');
+
+  // Dictation in the marking overlay: holding Space talks, the words go to the cursor, the agent learns they were dictated.
+  const askedV = nextNote();
+  await control(`sendelement ${sb.id} 20 20`);
+  await sleep(500);
+  const key = (type, extra = '') => `t.dispatchEvent(new KeyboardEvent('${type}', { key: ' ', bubbles: true${extra} }))`;
+  const held = await uiEval('annotator', `(() => { const t = document.getElementById('text'); t.focus(); t.value = 'Make'; t.setSelectionRange(4, 4); ${key('keydown')}; t.value += ' '; t.setSelectionRange(5, 5); return new Promise(r => setTimeout(() => { ${key('keydown', ', repeat: true')}; r(document.body.className + '|' + t.value) }, 400)); })()`);
+  check(held?.result?.includes('listening') && held.result.endsWith('|Make'), 'dictation: holding Space starts listening and takes the typed space away', JSON.stringify(held?.result ?? held?.error));
+  await control('speech interim it');
+  await control('speech final it green');
+  const released = await uiEval('annotator', `(() => { const t = document.getElementById('text'); ${key('keyup')}; return new Promise(r => setTimeout(() => r(document.body.className + '|' + t.value + '|' + t.selectionStart), 300)); })()`);
+  check(!released?.result?.includes('listening') && released?.result?.endsWith('|Make it green|13'), 'dictation: releasing Space ends it; the words follow the typed text, the cursor stays after them', JSON.stringify(released?.result ?? released?.error));
+  // The microphone button: press and hold; the signal level shows while listening.
+  const pressed = await uiEval('annotator', `(() => { const m = document.getElementById('mic'); m.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 1, bubbles: true })); return new Promise(r => setTimeout(() => r(document.body.className), 200)); })()`);
+  check(pressed?.result?.includes('listening'), 'dictation: pressing the microphone button starts listening', JSON.stringify(pressed?.result ?? pressed?.error));
+  await control('speech level 0.6');
+  const meter = await uiEval('annotator', `document.querySelector('#meter i').style.width`);
+  check(meter?.result === '60%', 'dictation: the meter follows the microphone level', JSON.stringify(meter?.result));
+  await control('speech final please');
+  const releasedM = await uiEval('annotator', `(() => { const m = document.getElementById('mic'); m.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 1, bubbles: true })); return new Promise(r => setTimeout(() => r(document.body.className + '|' + document.getElementById('text').value + '|' + document.getElementById('lang').value), 300)); })()`);
+  check(!releasedM?.result?.includes('listening') && /\|Make it green please\|[a-z]{2}-[A-Z]{2}$/.test(releasedM?.result ?? ''), 'dictation: releasing the button ends it; the words follow; a language is chosen', JSON.stringify(releasedM?.result ?? releasedM?.error));
+  // Released while macOS still asks for the microphone: the dictation ends at once
+  // (no "Finishing…" forever), and the late answer starts nothing.
+  await control('speech permission wait');
+  const mic = type => `document.getElementById('mic').dispatchEvent(new PointerEvent('${type}', { button: 0, pointerId: 1, bubbles: true }))`;
+  await uiEval('annotator', `(() => { ${mic('pointerdown')}; return 1; })()`);
+  await sleep(200);
+  const early = await uiEval('annotator', `(() => { ${mic('pointerup')}; return new Promise(r => setTimeout(() => r(document.body.className + '|' + document.getElementById('dictText').textContent), 300)); })()`);
+  check(!early?.result?.includes('listening') && !early?.result?.includes('Finishing'), 'dictation: released before the microphone is allowed, it ends at once', JSON.stringify(early?.result ?? early?.error));
+  await control('speech permission answer');
+  await sleep(300);
+  const late = await uiEval('annotator', `document.body.className + '|' + document.getElementById('text').value`);
+  check(!late?.result?.includes('listening') && late?.result?.endsWith('|Make it green please'), 'dictation: the late answer of macOS starts no recognition', JSON.stringify(late?.result ?? late?.error));
+  await uiEval('annotator', `document.getElementById('send').click()`);
+  const answerV = await askedV;
+  check(answerV.text.includes('The user says (dictated: a word may be misheard): "Make it green please"'), 'dictation: the agent learns that the comment was dictated', answerV.text.replace(/\n/g, ' | ').slice(0, 120));
+}
 await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 check(!(await state()).sessions.find(s => s.id === sb.id).nav.problems.length, 'problems: a new page starts without problems');
+// Errors count as seen while the tab's DevTools are open; after closing them only new ones count
+{
+  const badge = async () => { await sleep(400); return (await state()).sessions.find(s => s.id === sb.id).tabs.find(t => t.active)?.problems; };
+  const devtoolsOpen = async () => (await state()).sessions.find(s => s.id === sb.id).devtools;
+  const wasOpen = await devtoolsOpen();
+  if (!wasOpen) await control(`devtools ${sb.id}`);
+  await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => { console.error("seen in DevTools"); return 1; }' });
+  check(await badge() === 0, 'problems: no badge while the DevTools of the tab are open');
+  await control(`devtools ${sb.id}`);
+  check(!(await devtoolsOpen()) && await badge() === 0, 'problems: errors seen in the DevTools do not come back when they close');
+  await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => { console.error("after closing"); return 1; }' });
+  check(await badge() === 1, 'problems: a new error after closing the DevTools counts');
+  if (wasOpen) await control(`devtools ${sb.id}`);
+}
 
 // Web Share API: Electron lacks it; Habitab adds navigator.share before page scripts and receives the data (no menu in tests). macOS only: there is no share menu elsewhere
 if (process.platform === 'darwin') {
@@ -363,11 +498,13 @@ await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 await control(`select ${sb.id}`);
 await sleep(1200);
 const tl = (await state()).sessions.find(s => s.id === sb.id).timeline ?? [];
-const navBroken = tl.find(x => x.tool === 'navigate_page' && x.url?.endsWith('/broken'));
+const navBroken = tl.find(x => x.tool === 'Navigate' && x.url?.endsWith('/broken'));
 const tlDir = path.join(env.HABITAB_HOME, 'timeline', sb.id);
 check(tl.length >= 5 && navBroken?.shot && fs.existsSync(path.join(tlDir, `${navBroken.shot}.jpg`)) && fs.existsSync(path.join(tlDir, `${navBroken.shot}-t.jpg`)),
   'timeline: tool calls are recorded with URL and screenshot files', JSON.stringify(tl.slice(-4).map(x => [x.tool, x.url?.slice(-8), x.shot])));
+await pause();
 await b.tool('take_snapshot', { pageId: await pageId(b) });
+await pause();
 await b.tool('take_snapshot', { pageId: await pageId(b) });
 await sleep(1500);
 const tl2 = (await state()).sessions.find(s => s.id === sb.id).timeline;
@@ -384,110 +521,58 @@ await control(`action ${sb.id} timeline false`);
 await control(`devtools ${sb.id}`);
 check(dtHeight - dtHeightOpen === 59, 'timeline: open, it leaves docked DevTools free (they start below the thumbnails)', JSON.stringify([dtHeight, dtHeightOpen]));
 // Feedback on an earlier screenshot: the area is cut out of it, and the agent learns it is an earlier state
-const earlier = tl2.find(x => x.tool === 'navigate_page' && x.url?.endsWith('/broken') && x.shot);
+const earlier = tl2.find(x => x.tool === 'Navigate' && x.url?.endsWith('/broken') && x.shot);
 await control(`action ${sb.id} timeline true`);
 await control(`action ${sb.id} timelinePreview ${earlier.id}`);
 await sleep(800);
-const askedE = b.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-for (let i = 0; i < 30 && !(await state()).sessions.find(s => s.id === sb.id).feedback; i++) await sleep(100);
+const askedE = nextNote();
 await control(`action ${sb.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 4000, "height": 4000}, "text": "This was wrong"}`);
 const answerE = await askedE;
-check(answerE.text.includes('This was wrong') && answerE.text.includes('earlier state') && answerE.text.includes('/broken') && !answerE.text.includes('Elements in the area') && answerE.raw.result.content.some(c => c.type === 'image' && c.data.length > 100),
+check(answerE.text.includes('This was wrong') && answerE.text.includes('earlier state') && answerE.text.includes('/broken') && !answerE.text.includes('Marked: ') && answerE.raw.result.content.some(c => c.type === 'image' && c.data.length > 100),
   'feedback on an earlier screenshot: its part and the hint that it is an earlier state', answerE.text.replace(/\n/g, ' | ').slice(0, 220));
 await control(`action ${sb.id} timeline false`);
 // The timeline belongs to a tab: another tab has its own, and a closed tab takes its steps (and the close call) with it
 await control(`select ${sb.id}`);
 const tlBefore = (await state()).sessions.find(s => s.id === sb.id).timeline.map(x => x.id);
+await pause();
 await b.tool('new_page', { url: `${base}/other` });
+await pause();
 await b.tool('take_snapshot', { pageId: await pageId(b) });
 await sleep(1200);
 const tlOther = (await state()).sessions.find(s => s.id === sb.id).timeline;
-check(tlOther.some(x => x.tool === 'new_page') && tlOther.some(x => x.tool === 'take_snapshot') && tlOther.every(x => !tlBefore.includes(x.id)),
-  'timeline: a new tab has its own timeline, starting with the new_page call', JSON.stringify(tlOther.map(x => x.tool)));
+check(tlOther.some(x => x.tool === 'New page') && tlOther.some(x => x.tool === 'Snapshot') && tlOther.every(x => !tlBefore.includes(x.id)),
+  'timeline: a new tab has its own timeline, starting with the step that opened it', JSON.stringify(tlOther.map(x => x.tool)));
 const otherId = +((await b.tool('list_pages')).text.match(/^(\d+):.*\/other/m)?.[1]);
+await pause();
 await b.tool('close_page', { pageId: otherId });
 await sleep(1200);
 const tlAfter = (await state()).sessions.find(s => s.id === sb.id).timeline;
 check(tlBefore.length && tlAfter.map(x => x.id).join() === tlBefore.join(),
   'timeline: closing a tab removes its steps; the close call does not show in the remaining tab', JSON.stringify(tlAfter.slice(-3).map(x => x.tool)));
 
-// Claude Code channel: with the development flag, feedback arrives as a channel event
-const d = new McpClient(process.execPath, [path.join(import.meta.dirname, 'channel-parent.mjs'), '--dangerously-load-development-channels', 'server:chrome-devtools', '--', ...launcher],
-  { env, cwd: project('delta'), clientName: 'claude-code' });
-const initD = await d.initialize();
-check(initD.result?.capabilities?.experimental?.['claude/channel'], 'launcher declares the claude/channel capability for Claude Code');
-await d.tool('navigate_page', { pageId: await pageId(d), url: `${base}/delta` });
-const sd = (await state()).sessions.find(s => s.project === 'delta');
-check(sd?.channel === true && (await state()).sessions.find(s => s.id === sa.id)?.channel === false, 'channel detected from the client command line (and only there)');
-await control(`action ${sd.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 200, "height": 80}, "text": "Make it green"}`);
-let event;
-for (let i = 0; i < 30 && !event; i++) { await sleep(100); event = d.notifications.find(n => n.method === 'notifications/claude/channel'); }
-check(event?.params?.content.includes('Make it green') && event.params.content.includes('wait_for_user_feedback') && !event.params.content.includes('Elements'),
-  'marked area pushed as channel event (user words only)', JSON.stringify(event?.params ?? null).slice(0, 160));
-const afterPush = await d.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(afterPush.text.includes('Make it green') && afterPush.raw.result.content.some(c => c.type === 'image'), 'the feedback call after the event returns screenshot and elements at once');
-await d.tool('navigate_page', { pageId: await pageId(d), url: `${base}/broken` });
-for (let i = 0; i < 30 && ((await state()).sessions.find(s => s.id === sd.id).nav?.problems?.length ?? 0) < 3; i++) await sleep(100);
-const pushedBefore = d.notifications.length;
-await control(`action ${sd.id} problemsSend`);
-let pEvent;
-for (let i = 0; i < 30 && !pEvent; i++) { await sleep(100); pEvent = d.notifications.slice(pushedBefore).find(n => n.method === 'notifications/claude/channel'); }
-check(pEvent?.params?.content.includes('3 console errors') && !pEvent.params.content.includes('Oops') && !pEvent.params.content.includes('Boom'),
-  'problems pushed as channel event without page text', JSON.stringify(pEvent?.params ?? null).slice(0, 200));
-const afterP = await d.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(afterP.text.includes('Oops twice'), 'the feedback call after the event returns the problems');
 // Context menu "Send Element to Agent…": the overlay opens on the element.
-await control(`sendelement ${sd.id} 20 20`);
+await control(`select ${sb.id}`);
+await control(`sendelement ${sb.id} 20 20`);
 await sleep(500);
 check((await state()).annotating === true, 'send element: the marking overlay opens');
-await control(`action ${sd.id} annotate false`);
-await d.close();
+check((await state()).sessions.find(s => s.id === sb.id).held === true, 'marking: the agent waits while the overlay is open');
+await control(`action ${sb.id} annotate false`);
+await sleep(200);
+check((await state()).sessions.find(s => s.id === sb.id).held === false, 'marking: the agent goes on when the overlay closes');
 
-// Claude Code inbox socket: without a channel, the note goes to the session's inbox
-const inboxPath = path.join(tmp, 'inbox.sock');
-const inboxLines = [];
-const inbox = net.createServer(sock => {
-  let buf = '';
-  sock.on('data', c => { buf += c; let i; while ((i = buf.indexOf('\n')) >= 0) { inboxLines.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); } });
-});
-await new Promise(r => inbox.listen(inboxPath, r));
-const z = new McpClient(launcher[0], launcher.slice(1), { env: { ...env, CLAUDE_CODE_MESSAGING_SOCKET: inboxPath, CLAUDE_CODE_MESSAGING_TOKEN: 'test-token' }, cwd: project('zeta'), clientName: 'claude-code' });
-await z.initialize();
-await z.tool('navigate_page', { pageId: await pageId(z), url: `${base}/zeta` });
-const sz = (await state()).sessions.find(s => s.project === 'zeta');
-check(sz?.push === true && sz.channel === false, 'inbox socket detected: feedback reaches Claude Code at once', JSON.stringify({ push: sz?.push, channel: sz?.channel }));
-check((await state()).sessions.find(s => s.id === sa.id)?.push === false, 'no inbox socket, no channel: no push');
-await control(`action ${sz.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 200, "height": 80}, "text": "Bigger please"}`);
-for (let i = 0; i < 30 && inboxLines.length < 2; i++) await sleep(100);
-check(inboxLines[0]?.type === 'auth' && inboxLines[0].token === 'test-token', 'inbox: first line authenticates with the session token', JSON.stringify(inboxLines[0] ?? null));
-const note = inboxLines[1];
-check(note?.type === 'user' && note.message?.role === 'user' && note.message.content.includes('Bigger please') && note.message.content.includes('wait_for_user_feedback') && !note.message.content.includes('Elements'),
-  'inbox: a user message with the user words that asks for wait_for_user_feedback', JSON.stringify(note ?? null).slice(0, 200));
-const zAnswer = await z.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(zAnswer.text.includes('Bigger please') && zAnswer.raw.result.content.some(c => c.type === 'image'), 'the feedback call after the inbox note returns screenshot and elements at once');
-await z.close();
-inbox.close();
-
-// Codex: without a waiting call, the note is queued for the thread with `codex queue`
-const fakeCodex = path.join(tmp, 'codex');
-const queueLog = path.join(tmp, 'codex-queue.log');
-fs.writeFileSync(fakeCodex, `#!${process.execPath}\nrequire('fs').appendFileSync(${JSON.stringify(queueLog)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`, { mode: 0o755 });
-const q = new McpClient(launcher[0], launcher.slice(1), { env: { ...env, HABITAB_CODEX_COMMAND: fakeCodex }, cwd: project('eta'), clientName: 'codex-mcp-client' });
-await q.initialize();
-await q.tool('navigate_page', { pageId: await pageId(q), url: `${base}/eta` }, { threadId: 'thread-eta' });
-let sq;
-for (let i = 0; i < 30 && !sq?.push; i++) { await sleep(100); sq = (await state()).sessions.find(s => s.project === 'eta'); }
-check(sq?.push === true, 'codex queue available: feedback reaches Codex at once');
-check((await state()).sessions.find(s => s.id === sb.id)?.push === false, 'Codex without codex queue (parent is not codex): no push');
-await control(`action ${sq.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 200, "height": 80}, "text": "Move it left"}`);
-let queueCalls = [];
-for (let i = 0; i < 30 && queueCalls.length < 2; i++) { await sleep(100); try { queueCalls = fs.readFileSync(queueLog, 'utf8').trim().split('\n').map(l => JSON.parse(l)); } catch {} }
-const qArgs = queueCalls.find(a => a[0] === 'queue' && a[1] === '--thread');
-check(qArgs && qArgs[2] === 'thread-eta' && qArgs[3] === '--message' && qArgs[4].includes('Move it left') && qArgs[4].includes('wait_for_user_feedback'),
-  'codex queue: the note goes to the thread of the session', JSON.stringify(qArgs ?? queueCalls).slice(0, 200));
-const qAnswer = await q.tool('wait_for_user_feedback', { timeout_seconds: 30 });
-check(qAnswer.text.includes('Move it left'), 'the feedback call after the queued note returns the feedback at once');
-await q.close();
+// Without an inbox socket there is no channel: feedback is kept for the clipboard
+{ const g = client('gamma-plain', 'gemini');
+  await g.initialize();
+  await g.tool('navigate_page', { pageId: await pageId(g), url: `${base}/gamma-plain` });
+  const sg = await sessionOf(g);
+  check(sg?.client === 'gemini' && sg.push === false, 'a client without inbox or daemon: no push', JSON.stringify({ client: sg?.client, push: sg?.push }));
+  await control(`select ${sg.id}`);
+  await sleep(300);
+  await control(`action ${sg.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 100, "height": 50}, "text": "Copy me"}`);
+  await sleep(600);
+  check((await state()).clipboard?.includes('Copy me'), 'without a channel the feedback goes to the clipboard');
+  await g.close();
+}
 
 // bringToFront shows the tab in its session (without raising the window)
 await b.tool('select_page', { pageId: pb, bringToFront: true });
@@ -501,7 +586,7 @@ let nav = (await state()).sessions.find(s => s.id === sb.id).nav;
 let vp0 = await viewport();
 check(nav.emulation.fillWidth && nav.emulation.fillHeight && nav.frame?.scale === 1 && vp0?.[0] === nav.frame.width && vp0?.[1] === nav.frame.height,
   'responsive mode fills the free space by default', JSON.stringify({ vp0, frame: nav.frame }));
-// Tailwind breakpoint: width fixed, height still fills
+// Width preset: width fixed, height still fills
 await control(`action ${sb.id} emulate {"preset": "responsive", "width": 768}`);
 await sleep(400);
 nav = (await state()).sessions.find(s => s.id === sb.id).nav;
@@ -523,13 +608,36 @@ await b.tool('emulate', { pageId: pb, viewport: '500x400x1' });
 await sleep(400);
 emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
 check(emu?.by === 'agent' && emu.width === 500 && emu.height === 400, "the agent's emulation replaces the user's and shows in the bar", JSON.stringify(emu));
+// Marking in responsive mode: the overlay also covers the room beside the
+// viewport (for the form); a mark stays in the page and arrives in page coordinates.
+{
+  const boundsOf = async v => { const n = events.length; await control(`bounds ${v}`); return events.slice(n).find(e => e.bounds)?.bounds; };
+  await b.tool('evaluate_script', { pageId: pb, function: `() => { document.body.insertAdjacentHTML('beforeend', '<div id="mark-me" style="position:fixed;left:20px;top:20px;width:100px;height:60px;background:#fc0">Mark me</div>'); return 1; }` });
+  await control(`action ${sb.id} annotate true`);
+  await sleep(500);
+  const ov = await boundsOf('annotator'), pg = await boundsOf('page');
+  check(ov && pg && ov.width > pg.width && pg.x > ov.x, 'responsive mode: the marking overlay is wider than the viewport', JSON.stringify({ ov, pg }));
+  const at = (x, y) => `${pg.x - ov.x + x} ${pg.y - ov.y + y}`;
+  await control(`usermouse annotator down ${at(10, 10)}`);
+  for (const k of [0.5, 1]) await control(`usermouse annotator move ${at(10 + 120 * k, 10 + 80 * k)}`);
+  await control(`usermouse annotator up ${at(130, 90)}`);
+  await sleep(300);
+  // The mark is taken when the drag ends: the element may go before the comment is sent.
+  await control(`ui page (() => { document.getElementById('mark-me').remove(); return 1; })()`);
+  await sleep(100);
+  const markNote = nextNote();
+  await control(`ui annotator (() => { document.getElementById('text').value = 'Responsive mark'; document.getElementById('send').click(); return 1; })()`);
+  const marked = await markNote;
+  check(marked.text.includes('Responsive mark') && marked.text.includes('120 × 80 px at 10, 10') && marked.text.includes('mark-me'), 'responsive mode: the mark arrives in page coordinates, with the elements as they were when marked', marked.text.replace(/\n/g, ' | ').slice(0, 300));
+  await control(`action ${sb.id} annotate false`);
+}
 await control(`action ${sb.id} responsive`);
 await sleep(400);
 vpa = await viewport();
 check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.[0] > 600 && vpa?.[2] === vp0?.[2], 'leaving responsive mode restores the page size', JSON.stringify(vpa));
 
 // Active tabs: each tab the agent or the user used during the session's last 25 tool calls
-{ const z = client('tab-rule', 'claude-code');
+{ const z = client('tab-rule');
   await z.initialize();
   await z.tool('navigate_page', { pageId: await pageId(z), url: `${base}/z1` });
   await z.tool('new_page', { url: `${base}/z2` });
@@ -542,8 +650,8 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
   // The agent works with z1 in the background; z3 stays the front tab.
   await z.tool('take_snapshot', { pageId: zid('/z1') });
   check((await zs()).statusTab === (await tab('/z1')).id, 'the session status shows on the tab the agent works with');
-  // Page lists touch every tab, but they are no use of a tab.
-  for (let i = 0; i < 26; i++) await z.tool(i % 2 ? 'list_pages' : 'take_screenshot', { pageId: zid('/z1') });
+  // 26 steps in z1 (a step needs a pause after it). Page lists touch every tab, but they are no step and no use of a tab.
+  for (let i = 0; i < 26; i++) { await z.tool('take_screenshot', { pageId: zid('/z1') }); await z.tool('list_pages'); await pause(); }
   let t1 = await tab('/z1'), t2 = await tab('/z2'), t3 = await tab('/z3');
   check(!t1.inactive && t2.inactive && !t3.inactive && t3.active, 'tabs not used for 25 tool calls become inactive (the front tab stays)', JSON.stringify([t1.inactive, t2.inactive, t3.inactive]));
   // The user picks the inactive tab and works in it: it stays active after the user moves on.
@@ -557,7 +665,7 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
 
 // Debugger pause: high CPU shows a hint; the user's input pauses the agent's
 // debugger (project option), the agent's next work in the tab turns it on again.
-{ const d = client('dbg-rule', 'claude-code');
+{ const d = client('dbg-rule');
   await d.initialize();
   await d.tool('navigate_page', { pageId: await pageId(d), url: `${base}/busy` });
   const ds = async () => (await state()).sessions.find(s => s.projectPath.endsWith('dbg-rule'));
@@ -596,19 +704,19 @@ await sleep(800);
 sa = (await state()).sessions.find(s => s.id === sa.id);
 check(sa.phase === 'ended' && sa.tabs.length === 0, 'regular end closes all tabs of the session', sa.phase);
 
-// Pinned session keeps its browser after a hard crash of the launcher
+// Pinned session keeps its browser after a hard crash of the client with its server and bridge
 await control(`pin ${sb.id} on`);
-b.proc.kill('SIGKILL');
-await sleep(1000);
+process.kill(-b.proc.pid, 'SIGKILL');
+await sleep(1500);
 sb = (await state()).sessions.find(s => s.id === sb.id);
-check(sb.phase === 'kept' && sb.tabs.length > 0, 'launcher SIGKILL: pinned session keeps its browser', sb.phase);
+check(sb.phase === 'kept' && sb.tabs.length > 0, 'SIGKILL of client, server and bridge: pinned session keeps its browser', sb.phase);
 await control(`remove ${sb.id}`);
 check(!(await state()).sessions.find(s => s.id === sb.id), 'removing the session closes it');
 await sleep(300);
 check(!fs.existsSync(path.join(env.HABITAB_HOME, 'timeline', sb.id)), 'removing the session deletes its timeline screenshots');
 
-// App restart: the launcher reconnects; a new browser starts on demand
-const c = client('gamma', 'claude-code');
+// App restart: the server lives on; its next call starts a new bridge that rejoins the session
+const c = client('gamma');
 await c.initialize();
 await c.tool('navigate_page', { pageId: await pageId(c), url: `${base}/gamma` });
 const cookie = async () => (await c.tool('evaluate_script', { pageId: await pageId(c), function: '() => document.cookie' })).text;
@@ -619,7 +727,7 @@ await control(`action ${sc.id} persistentProfile "${sc.id}"`);
 await sleep(2500);
 check((await state()).sessions.find(s => s.id === sc.id)?.persistentProfile && (await cookie()).includes('login=yes'), 'persistent profile: the session moves to it with its cookies', (await cookie()).slice(0, 120));
 // A session without persistent profile: tabs and cookies are restored, too
-const dr = client('epsilon', 'claude-code');
+const dr = client('epsilon');
 await dr.initialize();
 await dr.tool('navigate_page', { pageId: await pageId(dr), url: `${base}/delta` });
 await dr.tool('evaluate_script', { pageId: await pageId(dr), function: '() => { document.cookie = "token=abc"; return 1 }' });
@@ -642,9 +750,9 @@ await control(`select ${sdBefore.id}`);
 const tlFrontAfter = (await state()).sessions.find(s => s.id === sdBefore.id).timeline.map(x => x.id);
 check(tlFront.length && tlFrontAfter.join() === tlFront.join(), 'app restart: the front tab keeps its own timeline', JSON.stringify([tlFront, tlFrontAfter]));
 await sleep(2500);
-// The agent goes on with its old page id: the launcher sends it to the restored tab.
+// The server lost its browser with the app and starts a new bridge with the next call; the restored tabs have new page ids.
 const deltaOld = await dr.tool('evaluate_script', { pageId: deltaIdBefore, function: '() => location.pathname' });
-check(deltaIdBefore && !deltaOld.isError && deltaOld.text.includes('"/delta"'), 'app restart: the old page id reaches the restored tab', deltaOld.text.replace(/\n/g, ' | ').slice(0, 200));
+check(deltaIdBefore && (deltaOld.isError || deltaOld.text.includes('"/delta"')), 'app restart: the agent goes on (an old page id may be gone)', deltaOld.text.replace(/\n/g, ' | ').slice(0, 120));
 const dPages = await dr.tool('list_pages');
 check(dPages.text.includes('/delta-2') && dPages.text.includes('/delta'), 'app restart: the agent sees its restored tabs', dPages.text.replace(/\n/g, ' | ').slice(0, 200));
 const dCookie = (await dr.tool('evaluate_script', { pageId: +(dPages.text.match(/^(\d+):.*\/delta\b/m)?.[1] ?? 1), function: '() => document.cookie' })).text;
@@ -654,10 +762,10 @@ const afterRestart = await c.tool('list_pages');
 check(afterRestart.text.includes('/gamma'), 'app restart: the gamma tab is restored', afterRestart.text.replace(/\n/g, ' | ').slice(0, 200));
 const pc = +(afterRestart.text.match(/^(\d+):/m)?.[1] ?? 1);
 const nav2 = await c.tool('navigate_page', { pageId: pc, url: `${base}/gamma-2` });
-check(!nav2.isError, 'after app restart the agent continues with a new session browser', nav2.text.slice(0, 80));
+check(!nav2.isError, 'after the app restart the agent continues in its restored session', nav2.text.slice(0, 80));
 check((await cookie()).includes('login=yes'), 'persistent profile survives an app restart', (await cookie()).slice(0, 120));
 // A second, parallel session of the same project gets a copy, not the profile itself
-const c2 = client('gamma', 'claude-code');
+const c2 = client('gamma');
 await c2.initialize();
 await c2.tool('navigate_page', { pageId: await pageId(c2), url: `${base}/gamma-3` });
 const c2cookie = (await c2.tool('evaluate_script', { pageId: await pageId(c2), function: '() => document.cookie' })).text;
@@ -669,6 +777,7 @@ await c.close();
 const finalErrors = (await state()).errors;
 check(!finalErrors.length, 'no errors reported during the test', finalErrors.join('; '));
 app.kill();
+inbox.close();
 page.close();
 // The app may still write its profile while it exits.
 await new Promise(r => (app.exitCode !== null ? r() : app.once('exit', r)));

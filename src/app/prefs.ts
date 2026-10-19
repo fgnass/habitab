@@ -22,6 +22,8 @@ export interface Prefs {
   clipboardAccess?: Record<string, Record<string, 'allow' | 'block'>>;
   /** http origins (with port) that Chromium treats as secure, e.g. a dev host on 127.0.0.1. Applied at app start. */
   secureOrigins?: string[];
+  /** Language of dictation (BCP 47); unset: the first preferred language of the system. */
+  dictationLanguage?: string;
 }
 
 let cache: Prefs | undefined;

@@ -1,16 +1,17 @@
-// Starts sessions through the launcher and keeps them alive, for manual UI
-// checks and app integration tests. Writes the launcher pids to stdout.
+// Starts sessions through the browser bridge and keeps them alive, for manual
+// UI checks. Needs a global config that names the browser script (see
+// bridgeEnv in bridge-env.mjs). Writes the client pids to stdout.
 //
-//   HABITAB_HOME=... HABITAB_SOCKET=... node Tests/integration/demo-sessions.mjs <habitab-bin> [seconds]
+//   HABITAB_HOME=... HABITAB_SOCKET=... node tests/integration/demo-sessions.mjs [seconds]
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { bridgeEnv, fakeClient } from './bridge-env.mjs';
 import { McpClient, sleep } from './mcp-client.mjs';
 
-const bin = process.argv[2];
-const seconds = +(process.argv[3] ?? 600);
-const server = ['npx', '-y', 'chrome-devtools-mcp@latest', '--isolated'];
+const seconds = +(process.argv[2] ?? 600);
+const env = bridgeEnv(path.join(process.env.TEST_TMP ?? os.tmpdir(), 'hb-demo'));
 
 const page = http.createServer((req, res) => {
   res.setHeader('content-type', 'text/html; charset=utf-8');
@@ -32,16 +33,16 @@ const projects = ['alpha-shop', 'beta-api'].map(n => {
 });
 
 const sessions = [
-  { name: 'claude-code', cwd: projects[0], url: `${base}/shop` },
-  { name: 'codex-mcp-client', cwd: projects[1], url: `${base}/api-docs`, meta: { threadId: '019abc-demo-thread', sessionId: 'demo-session' } },
+  { name: 'claude', cwd: projects[0], url: `${base}/shop` },
+  { name: 'codex', cwd: projects[1], url: `${base}/api-docs` },
 ];
 const clients = [];
 for (const s of sessions) {
-  const c = new McpClient(bin, ['mcp', '--', ...server], { cwd: s.cwd, clientName: s.name, env: { CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1' } });
+  const c = new McpClient(fakeClient(env, s.name), [], { cwd: s.cwd, env });
   await c.initialize();
-  const r = await c.tool('navigate_page', { pageId: 1, url: s.url }, s.meta);
-  await c.tool('evaluate_script', { pageId: 1, function: `() => { document.cookie = "who=${s.name}"; return 1 }` }, s.meta);
-  console.log(JSON.stringify({ launcher: c.proc.pid, client: s.name, ok: !r.isError }));
+  const r = await c.tool('navigate_page', { pageId: 1, url: s.url });
+  await c.tool('evaluate_script', { pageId: 1, function: `() => { document.cookie = "who=${s.name}"; return 1 }` });
+  console.log(JSON.stringify({ client: c.proc.pid, kind: s.name, ok: !r.isError }));
   clients.push({ c, s });
 }
 // Keep some agent activity going.
@@ -50,7 +51,7 @@ let i = 0;
 while (Date.now() < end) {
   await sleep(4000);
   const { c, s } = clients[i++ % clients.length];
-  await c.tool('take_snapshot', { pageId: 1 }, s.meta).catch(() => {});
+  await c.tool('take_snapshot', { pageId: 1 }).catch(() => {});
 }
 for (const { c } of clients) await c.close();
 page.close();

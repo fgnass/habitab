@@ -9,6 +9,7 @@ import { installLauncher } from '../installer/installer';
 import { desktopEnv, installDesktopEntry } from '../shared/platform';
 import { prefs, setPrefs, SidebarMode, sidebarMode } from './prefs';
 import { Session, SessionManager, SiteAccess, Tab } from './sessions';
+import { nearestModel, SpeechEvent, SpeechService } from './speech';
 import { uiState } from './ui-state';
 
 /** Sidebar widths: thumbnails with titles, thumbnails only (room for the window buttons), none. */
@@ -72,6 +73,13 @@ let sidebar: WebContentsView, topbar: WebContentsView, empty: WebContentsView, r
 let statusHeight = STATUSBAR;
 /** Marking mode: the annotator overlay lies over the selected page. */
 let annotating = false;
+/** While the user marks, the agent's commands wait: the session held for it, and the control it had before (put back after). */
+let annotateHold: { s: Session; before: 'none' | 'auto' | 'manual' } | null = null;
+/** What the user marked, taken at once: the page may change before the comment is written. */
+let mark: { tab: Tab; rect: Electron.Rectangle; done: Promise<Mark> } | null = null;
+type Mark = { image: Electron.NativeImage; url: string; css: Electron.Rectangle; page: { title: string; primary: string[]; inside: string[] } };
+/** The page's frame in the overlay, as last sent to it (JSON). */
+let annotateFrame = '';
 /** Find in page: the bar lies at the top right of the selected page; the running query, its tab and the key hook. */
 let findOpen = false, findText = '';
 let findTab: Tab | undefined;
@@ -202,10 +210,21 @@ function layout(): void {
   const shotBounds = { x: area.x, y: top, width: selPageWidth, height: Math.max(1, height - top) };
   timeline.setBounds(timelinePreview ? shotBounds : { x: 0, y: 0, width: 1, height: 1 });
   order.push(timeline);
-  // Marking mode: the overlay covers exactly the selected page view, or that screenshot.
-  if (annotating && !sel) annotating = false;
+  // Marking mode: the overlay covers the page area (in responsive mode also the
+  // room around the viewport, so the comment form is not cut off there), or that
+  // screenshot. The user marks only inside the page: its frame in the overlay.
+  if (annotating && !sel) { annotating = false; mark = null; releaseMarkHold(); }
   annotator.setVisible(annotating);
-  annotator.setBounds(annotating && sel ? (timelinePreview ? shotBounds : sel.view.getBounds()) : { x: 0, y: 0, width: 1, height: 1 });
+  if (annotating && sel) {
+    // Another session came to the front while marking: now its agent waits.
+    if (selected) holdForMark(selected);
+    const page = sel.view.getBounds();
+    const overlay = timelinePreview ? shotBounds : sel.emulation ? { x: area.x, y: area.y + RBAR, width: selPageWidth, height: Math.max(1, area.height - RBAR) } : page;
+    annotator.setBounds(overlay);
+    const frame = timelinePreview ? { x: 0, y: 0, width: overlay.width, height: overlay.height } : { x: page.x - overlay.x, y: page.y - overlay.y, width: page.width, height: page.height };
+    const key = JSON.stringify(frame);
+    if (key !== annotateFrame && !annotator.webContents.isDestroyed()) { annotateFrame = key; annotator.webContents.send('annotate-frame', frame); }
+  } else annotator.setBounds({ x: 0, y: 0, width: 1, height: 1 });
   order.push(annotator);
   // Opened, the status line lies over the page and that screenshot.
   order.push(status);
@@ -284,7 +303,8 @@ const USER_ACTIONS = new Set(['navigate', 'back', 'forward', 'reload', 'stop', '
 
 async function action(name: string, ...args: any[]): Promise<unknown> {
   const s = selected();
-  if (s && USER_ACTIONS.has(name)) manager.userInput(s);
+  // In the user's own tab the agent goes on.
+  if (s && USER_ACTIONS.has(name) && !s.active?.own) manager.userInput(s);
   switch (name) {
     case 'select': return select(args[0], args[1]);
     case 'navigate': {
@@ -301,6 +321,7 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
       return target?.view.webContents.close();
     }
     case 'hold': return s && manager.toggleHold(s);
+    case 'fork': return s && manager.forkTab(s);
     case 'pin': { const x = manager.sessions.get(args[0]); if (x) { x.pinned = !x.pinned; publish(); } return; }
     case 'mute': return s && manager.setMuted(s, typeof args[0] === 'boolean' ? args[0] : !s.muted);
     // Top bar: turn the paused debugger of the front tab on now, or pause it (and keep the project option on).
@@ -322,6 +343,7 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     }
     case 'findStep': return void (findTab && runFind({ forward: args[0] !== false, next: true }));
     case 'findClose': return closeFind();
+    case 'annotateMark': return s?.active && annotateMark(s.active, args[0]);
     case 'annotateSubmit': return s?.active && annotateSubmit(s, s.active, args[0]);
     // Console errors: the badge opens the DevTools console of the tab (optionally another session's tab first);
     // its context menu sends them to the agent.
@@ -393,11 +415,39 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
   }
 }
 
-function setAnnotating(on: boolean): void {
-  annotating = on && !!selected()?.active;
+/** Marking on or off. Off: the agent goes on, unless the hold is kept (released after the feedback went out). */
+function setAnnotating(on: boolean, keepHold = false): void {
+  const s = selected();
+  annotating = on && !!s?.active;
+  if (annotating && s) holdForMark(s);
+  else { mark = null; if (!keepHold) releaseMarkHold(); }
   layout();
   publish();
   if (annotating) focusView(annotator);
+}
+
+/**
+ * While the overlay is open, the agent's commands wait: what the user marks
+ * must stay on the screen until the comment is written. Control the user
+ * took stays as it was afterwards.
+ */
+function holdForMark(s: Session): void {
+  if (annotateHold?.s === s) return;
+  releaseMarkHold();
+  if (s.ended || !s.line) return;
+  annotateHold = { s, before: !s.held ? 'none' : s.autoResumeAt ? 'auto' : 'manual' };
+  if (annotateHold.before !== 'manual') manager.setHold(s, true);
+}
+
+function releaseMarkHold(): void {
+  if (!annotateHold) return;
+  const { s, before } = annotateHold;
+  annotateHold = null;
+  if (before === 'manual' || s.ended) return;
+  // Meanwhile the user resumed the agent or took control: that stays.
+  if (!s.held || s.autoResumeAt) return;
+  if (before === 'auto') manager.setHold(s, true, true);
+  else manager.setHold(s, false);
 }
 
 function setTimelineOpen(on: boolean): void {
@@ -480,7 +530,7 @@ async function askSiteAccess(s: Session, kind: SiteAccess, origin: string, types
   const r = await dialog.showMessageBox(win, {
     type: 'question', buttons: ['Allow', 'Block'], defaultId: 0, cancelId: 1,
     message: `${origin} wants to ${what}`,
-    detail: `Asked by a page in “${project}”.${s.meta.client ? ` The agent (${s.meta.clientName ?? s.meta.client}) may be using this tab.` : ''}`,
+    detail: `Asked by a page in “${project}”.${s.meta.client ? ` The agent (${s.meta.client}) may be using this tab.` : ''}`,
     checkboxLabel: `Remember for ${origin} in “${project}”`, checkboxChecked: true,
   });
   const allow = r.response === 0;
@@ -495,6 +545,10 @@ async function askSiteAccess(s: Session, kind: SiteAccess, origin: string, types
     }
   }
   return true;
+}
+
+function originOf(url: string): string {
+  try { return new URL(url).origin; } catch { return url; }
 }
 
 /** Shared files may be large; Chrome refuses big shares too. */
@@ -535,10 +589,122 @@ async function sharePage(senderId: number, json: string): Promise<string> {
   return 'ok';
 }
 
+// MARK: Speech recognition (pages and dictation)
+
+const speech = new SpeechService();
+/** Recognitions of the pages and views, by webContents and the page's own id. */
+const recognitions = new Map<string, { helperId?: number; ended: boolean; send: (e: SpeechEvent) => void }>();
+
+/**
+ * A request of the Web Speech API in a page (page-preload.ts) or of Habitab's
+ * dictation (preload.ts): JSON in, "ok" or an answer out; the events of a
+ * recognition go back over 'habitab:speech'. A page needs microphone access
+ * for its origin (asked like getUserMedia); Habitab's own views need macOS's
+ * permission for the app.
+ */
+async function speechRequest(wc: Electron.WebContents, json: string): Promise<string> {
+  let r: { op: string; id?: number; lang?: string; interim?: boolean; continuous?: boolean };
+  try { r = JSON.parse(json); } catch { return 'error'; }
+  const page = manager.pageOf(wc.id);
+  // Habitab's own views dictate in the chosen language; a page names its own.
+  const lang = (typeof r.lang === 'string' ? r.lang : '') || (page ? '' : dictationLanguage());
+  if (r.op === 'available') return speech.available(lang);
+  if (r.op === 'install') return String(await speech.install(lang));
+  if (r.op === 'setLanguage') { setPrefs({ dictationLanguage: lang || undefined }); return 'ok'; }
+  // Dictation of the app: the language, its model (downloaded when missing) and the choices.
+  if (r.op === 'prepare') {
+    const preferred = app.getPreferredSystemLanguages();
+    const byPreference = (a: string, b: string) => (preferred.indexOf(a) + 1 || 99) - (preferred.indexOf(b) + 1 || 99);
+    const languages = (await speech.languages()).sort(byPreference);
+    // A system language the recognizer has no model for, e.g. en-DE, is shown as its nearest model (en-US).
+    const l = nearestModel(dictationLanguage(), languages);
+    let status = await speech.available(l);
+    if (status === 'downloadable' || status === 'downloading') status = (await speech.install(l)) ? 'available' : 'unavailable';
+    return JSON.stringify({ status, lang: l, languages });
+  }
+  const key = `${wc.id}:${r.id}`;
+  const rec = recognitions.get(key);
+  if (r.op === 'stop' || r.op === 'abort') {
+    if (!rec) return 'ok';
+    if (rec.helperId !== undefined) (r.op === 'stop' ? speech.stop : speech.abort).call(speech, rec.helperId);
+    // Ended before the permission question was answered: no recognition starts,
+    // and the overlay gets its end now (it waits for it).
+    else { log(`dictation ${r.op} before the recognition started`); rec.send({ type: 'end' }); }
+    return 'ok';
+  }
+  if (r.op !== 'start' || typeof r.id !== 'number') return 'error';
+  const send = (e: SpeechEvent) => {
+    if (mine.ended) return;
+    if (e.type === 'end') { if (recognitions.get(key) === mine) recognitions.delete(key); mine.ended = true; }
+    if (!wc.isDestroyed()) wc.send('habitab:speech', JSON.stringify({ id: r.id, ...e }));
+  };
+  const mine: { helperId?: number; ended: boolean; send: typeof send } = { ended: false, send };
+  recognitions.set(key, mine);
+  const s = page?.s ?? selected();
+  let allowed = speech.supported;
+  if (!allowed) send({ type: 'error', error: 'service-not-allowed', message: 'Speech recognition is not available on this computer' });
+  else if (page) {
+    const origin = originOf(wc.getURL());
+    const known = manager.siteAccess(page.s, 'media', origin);
+    allowed = known ? known === 'allow' : await askSiteAccess(page.s, 'media', origin, ['audio']);
+  } else allowed = await ownMicrophoneAccess();
+  if (mine.ended) return 'ok';
+  if (!allowed) {
+    if (speech.supported) send({ type: 'error', error: 'not-allowed', message: 'Microphone access is not allowed' });
+    send({ type: 'end' });
+    return 'ok';
+  }
+  mine.helperId = speech.start({ lang, interim: !!r.interim, context: speechContext(s) }, send);
+  return 'ok';
+}
+
+/** The language of the app's dictation: chosen in the overlay, else the system's first language. */
+function dictationLanguage(): string {
+  return prefs().dictationLanguage || app.getPreferredSystemLanguages()[0] || app.getLocale();
+}
+
+/** Tests (fake speech): macOS's microphone question stays open until the test control answers it. */
+let fakeMicWaits = false;
+let fakeMicAnswer: (() => void) | undefined;
+
+/** Habitab's own dictation: macOS must let the app use the microphone. */
+async function ownMicrophoneAccess(): Promise<boolean> {
+  if (process.env.HABITAB_FAKE_SPEECH === '1') { if (fakeMicWaits) await new Promise<void>(r => { fakeMicAnswer = r; }); return true; }
+  if (process.platform !== 'darwin') return true;
+  const status = systemPreferences.getMediaAccessStatus('microphone');
+  if (status === 'granted') return true;
+  log(`dictation: microphone access is ${status}, asking macOS`);
+  if (await systemPreferences.askForMediaAccess('microphone')) return true;
+  showNotice('macOS does not let Habitab use the microphone: System Settings → Privacy & Security → Microphone');
+  return false;
+}
+
+/**
+ * Words the recognizer should expect (like a custom vocabulary): the project,
+ * what the session's tabs show, and what the agent did last.
+ */
+function speechContext(s?: Session): string[] {
+  const out = new Set<string>(['Habitab']);
+  const add = (x?: string) => { const t = x?.trim(); if (t && t.length > 2 && t.length <= 60) out.add(t); };
+  if (s) {
+    add(s.meta.projectName);
+    for (const t of s.tabs) {
+      const wc = t.view.webContents;
+      if (wc.isDestroyed()) continue;
+      const title = wc.getTitle();
+      add(title);
+      for (const w of title.split(/[\s|·•—–:,()[\]"']+/)) if (/^[\p{L}\p{N}][\p{L}\p{N}.'-]*$/u.test(w)) add(w);
+      try { add(new URL(wc.getURL()).hostname); } catch {}
+    }
+    for (const a of s.activity.slice(0, 8)) add(a.summary);
+  }
+  return [...out].slice(0, 100);
+}
+
 /** Sends a tab's console errors (all, or the given ones) to the agent and tells the user how. */
 function sendProblems(s: Session, tab: Tab, ids?: number[]): void {
   const how = manager.sendProblems(s, tab, ids);
-  if (how) showNotice(how === 'sent' ? 'Sent to the waiting agent' : how === 'pushed' ? 'Sent to the agent' : 'Kept for the agent’s next feedback call');
+  if (how) showNotice(how === 'pushed' ? 'Sent to the agent' : 'Not sent: this agent has no channel for feedback');
 }
 
 const sendLabel = (n: number) => n === 1 ? 'Send Console Error to Agent' : n > 1 ? `Send ${n} Console Errors to Agent` : 'Send Console Errors to Agent';
@@ -592,45 +758,81 @@ function showNotice(text: string): void {
   setTimeout(publish, 5100);
 }
 
-/** Describes the elements in a page area (runs in an isolated world, reads the DOM only). */
+/**
+ * Describes the elements in a page area (runs in an isolated world, reads the
+ * DOM only). The elements about the size of the area (or smaller) are what
+ * the user meant: they come with a short text. Bigger ones only contain the
+ * area and are named as the way down to the first one.
+ */
 const DESCRIBE_AREA = `(r => {
-  const seen = new Set(), out = [];
   const label = el => {
-    let s = el.tagName.toLowerCase();
+    const s = el.tagName.toLowerCase();
     if (el.id) return s + '#' + CSS.escape(el.id);
-    const cls = [...el.classList].slice(0, 2).map(c => '.' + CSS.escape(c)).join('');
-    return s + cls;
+    return s + [...el.classList].slice(0, 2).map(c => '.' + CSS.escape(c)).join('');
   };
-  const path = el => { const parts = []; for (let e = el; e && e.nodeType === 1 && parts.length < 4; e = e.parentElement) { parts.unshift(label(e)); if (e.id) break; } return parts.join(' > '); };
+  const short = el => {
+    const t = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('placeholder') || '').trim().replace(/\\s+/g, ' ');
+    return t.length <= 40 ? t : t.slice(0, 40).replace(/\\s+\\S*$/, '') + '…';
+  };
+  const size = el => { const b = el.getBoundingClientRect(); return Math.max(1, b.width * b.height); };
+  const hits = new Map();
   for (let i = 0; i <= 6; i++) for (let j = 0; j <= 6; j++) {
     const el = document.elementFromPoint(r.x + r.width * i / 6, r.y + r.height * j / 6);
-    if (!el || seen.has(el) || el === document.documentElement || el === document.body) continue;
-    seen.add(el);
-    const text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('placeholder') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
-    out.push('- ' + path(el) + (text ? ' "' + text + '"' : ''));
+    if (!el || el === document.documentElement || el === document.body) continue;
+    hits.set(el, (hits.get(el) || 0) + 1);
   }
-  return { title: document.title, elements: out.slice(0, 12) };
+  const els = [...hits.keys()];
+  let primary = els.filter(el => size(el) <= r.width * r.height * 4).sort((a, b) => hits.get(b) - hits.get(a) || size(a) - size(b));
+  // Neighbors touched by the edge of the area are not what was meant.
+  if (primary.length) primary = primary.filter(el => hits.get(el) >= hits.get(primary[0]) / 5);
+  if (!primary.length) primary = els.sort((a, b) => size(a) - size(b)).slice(0, 1);
+  primary = primary.slice(0, 4);
+  const inside = [];
+  for (let e = primary[0]?.parentElement; e && e !== document.body && inside.length < 3; e = e.parentElement) inside.push(label(e));
+  return { title: document.title, primary: primary.map(el => label(el) + (short(el) ? ' "' + short(el) + '"' : '')), inside };
 })`;
 
-/** The user marked an area: to the waiting agent, otherwise to the clipboard. */
-async function annotateSubmit(s: Session, tab: Tab, data: { rect: Electron.Rectangle; text: string }): Promise<void> {
-  if (timelinePreview && timelineStep !== null) return annotateScreenshot(s, timelineStep, data);
-  setAnnotating(false);
+/**
+ * The user marked an area (the overlay reports it as soon as the drag ends):
+ * the picture, the URL and the elements are taken now, not when the comment
+ * is sent, so the feedback shows what the user saw.
+ */
+function annotateMark(tab: Tab, rect: Electron.Rectangle): void {
+  if (timelinePreview) return; // An earlier screenshot: it does not change.
+  const done = captureMark(tab, rect);
+  done.catch(() => {}); // A mark that is cancelled is never awaited.
+  mark = { tab, rect, done };
+}
+
+async function captureMark(tab: Tab, r: Electron.Rectangle): Promise<Mark> {
   const wc = tab.view.webContents;
-  const r = data.rect;
+  const url = wc.getURL();
   const image = await wc.capturePage(r);
   // View pixels to CSS pixels of the page (zoom, responsive-mode scale).
   const f = wc.getZoomFactor() * (tab.emulation?.scale ?? 1);
   const css = { x: r.x / f, y: r.y / f, width: r.width / f, height: r.height / f };
-  let page: { title: string; elements: string[] } = { title: wc.getTitle(), elements: [] };
+  let page: Mark['page'] = { title: wc.getTitle(), primary: [], inside: [] };
   try { page = await wc.executeJavaScriptInIsolatedWorld(999, [{ code: `${DESCRIBE_AREA}(${JSON.stringify(css)})` }]); } catch {}
-  const text = [
-    data.text ? `The user says: ${data.text}` : 'The user marked an area without a comment.',
-    `Page: ${wc.getURL()}${page.title ? ` ("${page.title}")` : ''}`,
-    `Marked area (CSS px in the viewport): x ${Math.round(css.x)}, y ${Math.round(css.y)}, ${Math.round(css.width)} × ${Math.round(css.height)}`,
-    ...(page.elements.length ? ['Elements in the area:', ...page.elements] : []),
-  ].join('\n');
-  await deliverFeedback(s, { text, comment: data.text, url: wc.getURL(), image });
+  return { image, url, css, page };
+}
+
+/** The user marked an area: to the waiting agent, otherwise to the clipboard. */
+async function annotateSubmit(s: Session, tab: Tab, data: { rect: Electron.Rectangle; text: string; dictated?: boolean }): Promise<void> {
+  if (timelinePreview && timelineStep !== null) return annotateScreenshot(s, timelineStep, data);
+  const r = data.rect;
+  // The mark taken when the drag ended; without one (a direct call) the page is taken now.
+  const kept = mark && mark.tab === tab && mark.rect.x === r.x && mark.rect.y === r.y && mark.rect.width === r.width && mark.rect.height === r.height ? mark.done : null;
+  setAnnotating(false, true);
+  try {
+    const { image, url, css, page } = await (kept ?? captureMark(tab, r));
+    const where = `${Math.round(css.width)} × ${Math.round(css.height)} px at ${Math.round(css.x)}, ${Math.round(css.y)}`;
+    const text = [
+      data.text ? `The user says${data.dictated ? ' (dictated: a word may be misheard)' : ''}: "${data.text}"` : 'The user marked an area without a comment.',
+      `Page: ${url}${page.title ? ` ("${page.title}")` : ''}`,
+      `Marked: ${page.primary.length ? page.primary.join(', ') + ' ' : ''}(${where}${page.inside.length ? `, inside ${page.inside.join(' > ')}` : ''})`,
+    ].join('\n');
+    await deliverFeedback(s, { text, comment: data.text, url, image });
+  } finally { releaseMarkHold(); }
 }
 
 /**
@@ -638,8 +840,11 @@ async function annotateSubmit(s: Session, tab: Tab, data: { rect: Electron.Recta
  * out of the stored screenshot, and the agent learns that it is about an
  * earlier state of the page, not the live one. An image has no elements.
  */
-async function annotateScreenshot(s: Session, stepId: number, data: { rect: Electron.Rectangle; text: string }): Promise<void> {
-  setAnnotating(false);
+async function annotateScreenshot(s: Session, stepId: number, data: { rect: Electron.Rectangle; text: string; dictated?: boolean }): Promise<void> {
+  setAnnotating(false, true);
+  try { await annotateScreenshotSend(s, stepId, data); } finally { releaseMarkHold(); }
+}
+async function annotateScreenshotSend(s: Session, stepId: number, data: { rect: Electron.Rectangle; text: string; dictated?: boolean }): Promise<void> {
   const step = s.timeline.find(x => x.id === stepId);
   const file = manager.stepShotFile(s, stepId);
   const full = file ? nativeImage.createFromPath(file) : undefined;
@@ -658,7 +863,7 @@ async function annotateScreenshot(s: Session, stepId: number, data: { rect: Elec
   const at = new Date(step.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const url = step.url || 'unknown';
   const text = [
-    data.text ? `The user says: ${data.text}` : 'The user marked an area without a comment.',
+    data.text ? `The user says${data.dictated ? ' (dictated: a word may be misheard)' : ''}: ${data.text}` : 'The user marked an area without a comment.',
     `This is about an earlier state, not the live page: the screenshot Habitab took after your tool call ${step.tool} at ${at}.`,
     `Page then: ${url}${step.title ? ` ("${step.title}")` : ''}`,
     `Marked area (px of the ${size.width} × ${size.height} screenshot): x ${crop.x}, y ${crop.y}, ${crop.width} × ${crop.height}`,
@@ -670,11 +875,10 @@ async function annotateScreenshot(s: Session, stepId: number, data: { rect: Elec
 async function deliverFeedback(s: Session, f: { text: string; comment: string; url: string; image: Electron.NativeImage; what?: string }): Promise<void> {
   const { text, image } = f;
   const how = manager.submitFeedback(s, { text, comment: f.comment, url: f.url, what: f.what, image: image.isEmpty() ? undefined : image.toPNG().toString('base64') });
-  if (how === 'sent') return showNotice('Sent to the waiting agent');
-  if (how === 'pushed') return showNotice('Sent to Claude Code');
+  if (how === 'pushed') return showNotice(`Sent to ${s.meta.client === 'codex' ? 'Codex' : s.meta.client === 'claude' ? 'Claude Code' : 'the agent'}`);
   if (testHidden) lastClipboard = text; // tests must not touch the user's clipboard
   else await clipboard.write([new ClipboardItem({ 'text/plain': text, 'image/png': new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' }) })]);
-  showNotice('Kept for the agent’s next feedback call, and copied to the clipboard');
+  showNotice('Copied to the clipboard: this agent has no channel for feedback');
 }
 let lastClipboard = '';
 
@@ -793,6 +997,25 @@ function normalizeUrl(input: string): string {
 
 // MARK: Setup (runs in a worker: the Claude CLI calls are synchronous)
 
+/**
+ * One way only: at start the app names its browser in the global config of
+ * chrome-devtools-mcp (unless the file is invalid or names its own browser)
+ * and removes the launcher wrappers of Habitab 0.2 from the client
+ * configurations. Servers already running keep their old browser until they
+ * restart (the sidebar says so).
+ */
+async function migrate(): Promise<void> {
+  try {
+    const r = await installer('migrate', testControl ? ['cd4a'] : undefined) as { error?: string; cd4a?: { ok: boolean; message: string }; results?: { ok: boolean; message: string; finding: { name: string } }[] };
+    if (r.error) return log(`migration failed: ${r.error}`);
+    if (r.cd4a) log(`migration: ${r.cd4a.message}`);
+    for (const x of r.results ?? []) log(`migration: ${x.finding.name}: ${x.message}`);
+    const changed = (r.cd4a?.ok ? 1 : 0) + (r.results ?? []).filter(x => x.ok).length;
+    if (changed) showNotice('Set up: chrome-devtools-mcp opens its browser here from now on. Running agent sessions need a restart of their server.');
+    if (r.cd4a && !r.cd4a.ok) showNotice(`Setup: ${r.cd4a.message}`);
+  } catch (e: any) { log(`migration failed: ${e.message}`); }
+}
+
 function installer(op: string, ids?: string[]): Promise<any> {
   return new Promise((resolve, reject) => {
     const w = new Worker(path.join(__dirname, 'setup-worker.js'), { workerData: { op, ids } });
@@ -803,6 +1026,7 @@ function installer(op: string, ids?: string[]): Promise<any> {
 
 ipcMain.handle('setup', (_e, op: string, ids?: string[]) => installer(op, ids));
 ipcMain.handle('habitab:share', (e, json: string) => sharePage(e.sender.id, json));
+ipcMain.handle('habitab:speech', (e, json: string) => speechRequest(e.sender, json));
 
 function openSetup(): void {
   if (setupWindow && !setupWindow.isDestroyed()) { setupWindow.show(); setupWindow.focus(); return; }
@@ -870,6 +1094,7 @@ function updateMenu(): void {
     ] },
     { label: 'Session', submenu: [
       { label: s?.autoResumeAt ? 'Keep Control' : s?.held ? 'Resume Agent' : 'Take Control', accelerator: 'CmdOrCtrl+Shift+P', enabled: !!s && !s.ended, click: () => s && manager.toggleHold(s) },
+      { label: 'Continue in Own Tab', accelerator: 'CmdOrCtrl+Shift+O', enabled: !!s?.active && !s.active.own && !s.ended, click: () => s && void manager.forkTab(s) },
       { label: 'Mark Area for Agent…', accelerator: 'CmdOrCtrl+Shift+A', enabled: !!s?.active, click: () => setAnnotating(true) },
       { label: 'Show Console', accelerator: 'CmdOrCtrl+Shift+E', enabled: !!s?.active, click: () => void action('problems') },
       { label: sendLabel(s?.active?.problems.length ?? 0), enabled: !!s?.active?.problems.length, click: () => s?.active && sendProblems(s, s.active) },
@@ -930,10 +1155,10 @@ app.whenReady().then(async () => {
     log(`window focus${recent.length ? ` (agent tools: ${recent.join(', ')})` : ''}`);
   });
   win.on('close', e => {
-    // Closing the window quits the app. A launcher starts it again when its agent needs the browser.
+    // Closing the window quits the app. A browser bridge starts it again when its agent needs the browser.
     if (!quitting) { e.preventDefault(); app.quit(); }
   });
-  // Sessions of the last run come back before their launchers reconnect.
+  // Sessions of the last run come back before their bridges reconnect.
   await manager.restore();
   manager.listen();
   if (testControl) {
@@ -946,16 +1171,17 @@ app.whenReady().then(async () => {
   setInterval(() => { manager.idleCheck(); manager.saveSoon(); }, 30_000);
   setInterval(() => manager.cpuCheck(), 3_000);
 
-  // Stable launcher for client configurations.
+  // The habitab command and the browser script (executablePath of the global config).
   try {
     const launcherJs = path.join(__dirname, '..', 'launcher', 'main.js');
     installLauncher(process.execPath, launcherJs);
+    if (!testControl || process.env.HABITAB_TEST_MIGRATE === '1') void migrate();
     // In development the executable is Electron itself and needs the app dir.
     const args = app.isPackaged ? [] : [app.getAppPath()];
     fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args, env: desktopEnv() }), { mode: 0o600 });
     if (!testControl) installDesktopEntry({ exe: process.execPath, args }, path.join(UI, 'icon.png'), paths.home);
-  } catch (e: any) { log(`launcher install failed: ${e.message}`); }
-  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, findText: () => findOpen ? findText : null, lastShare: () => lastShare, view: name => ({ sidebar, topbar, timeline, annotator, status, find, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
+  } catch (e: any) { log(`script install failed: ${e.message}`); }
+  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, findText: () => findOpen ? findText : null, lastShare: () => lastShare, speechResult: (text, final) => speech.fakeResult(text, final), speechLevel: level => speech.fakeLevel(level), speechPermission: (wait: boolean) => { fakeMicWaits = wait; if (!wait) { fakeMicAnswer?.(); fakeMicAnswer = undefined; } }, view: name => ({ sidebar, topbar, timeline, annotator, status, find, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
 });
 
@@ -988,6 +1214,7 @@ app.on('before-quit', e => {
       if (r.response !== 0) return;
     }
     quitting = true;
+    speech.dispose();
     await manager.save();
     manager.close();
     for (const s of manager.sessions.values()) s.proxy?.close();

@@ -5,12 +5,35 @@ contextBridge.exposeInMainWorld('habitab', {
   onState: (cb: (state: unknown) => void) => ipcRenderer.on('state', (_e, s) => cb(s)),
   onFocusUrl: (cb: () => void) => ipcRenderer.on('focus-url', () => cb()),
   onAnnotateRect: (cb: (rect: { x: number; y: number; width: number; height: number }) => void) => ipcRenderer.on('annotate-rect', (_e, r) => cb(r)),
+  onAnnotateFrame: (cb: (frame: { x: number; y: number; width: number; height: number }) => void) => ipcRenderer.on('annotate-frame', (_e, f) => cb(f)),
   onFocusSearch: (cb: () => void) => ipcRenderer.on('focus-search', () => cb()),
   onThumb: (cb: (tabId: number, url: string | null) => void) => ipcRenderer.on('thumb', (_e, id, url) => cb(id, url)),
   action: (name: string, ...args: unknown[]) => ipcRenderer.invoke('action', name, ...args),
   setup: (op: string, ids?: string[]) => ipcRenderer.invoke('setup', op, ids),
   platform: process.platform,
+  // Dictation (see speech.ts): events of a recognition until "end".
+  speech: {
+    start: (opts: { lang: string; interim: boolean }, onEvent: (e: unknown) => void): number => {
+      const id = ++speechId;
+      const listener = (_e: unknown, json: string) => {
+        const e = JSON.parse(json);
+        if (e.id !== id) return;
+        if (e.type === 'end') ipcRenderer.removeListener('habitab:speech', listener);
+        onEvent(e);
+      };
+      ipcRenderer.on('habitab:speech', listener);
+      void ipcRenderer.invoke('habitab:speech', JSON.stringify({ op: 'start', id, lang: opts.lang, interim: opts.interim, continuous: true }));
+      return id;
+    },
+    stop: (id: number) => ipcRenderer.invoke('habitab:speech', JSON.stringify({ op: 'stop', id })),
+    abort: (id: number) => ipcRenderer.invoke('habitab:speech', JSON.stringify({ op: 'abort', id })),
+    available: (lang: string) => ipcRenderer.invoke('habitab:speech', JSON.stringify({ op: 'available', lang })),
+    /** The app's dictation language, its model (downloaded when missing) and the choices, as JSON. */
+    prepare: () => ipcRenderer.invoke('habitab:speech', JSON.stringify({ op: 'prepare' })),
+    setLanguage: (lang: string) => ipcRenderer.invoke('habitab:speech', JSON.stringify({ op: 'setLanguage', lang })),
+  },
 });
+let speechId = 0;
 
 // Styles that differ by platform use :root[data-platform=…].
 const markPlatform = () => { if (document.documentElement) document.documentElement.dataset.platform = process.platform; };

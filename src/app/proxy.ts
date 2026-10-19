@@ -38,12 +38,17 @@ export interface ProxyHooks {
   debuggerBack: (targetId: string) => void;
   /** The agent brings a tab to the front: show it in its session, never raise the window. */
   activateTab: (targetId: string) => void;
+  /** The client's commands, their answers and the browser's events (sessions whose tool calls Habitab does not see, see cdp-steps.ts). */
+  agentCommand?: (key: string, method: string, params: any, sessionId?: string) => void;
+  agentReply?: (key: string, error?: string) => void;
+  agentEvent?: (method: string, params: any, sessionId?: string) => void;
 }
 
 export class SessionProxy {
   private server = http.createServer((req, res) => void this.http(req, res));
   private wss = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 * 1024 });
   private sockets = new Set<WebSocket>();
+  private connections = 0;
   private debuggerSwitches = new Set<(targetId: string, on: boolean) => Promise<void>>();
   port = 0;
 
@@ -119,6 +124,8 @@ export class SessionProxy {
   private connection(client: WebSocket): void {
     const h = this.hooks;
     this.sockets.add(client);
+    const conn = ++this.connections;
+    const key = (id: number) => `${conn}:${id}`;
     const upstream = new WebSocket(h.upstreamUrl(), { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
     const queue: string[] = [];
     const ownTargets = new Set<string>();
@@ -138,8 +145,8 @@ export class SessionProxy {
       upstream.readyState === WebSocket.OPEN ? upstream.send(s) : queue.push(s);
     };
     const own = (info: any) => info?.browserContextId === h.browserContextId;
-    const reply = (id: number, result: unknown, sessionId?: string) => toClient(sessionId ? { id, result, sessionId } : { id, result });
-    const fail = (id: number, message: string, sessionId?: string) => toClient({ id, error: { code: -32000, message }, ...(sessionId ? { sessionId } : {}) });
+    const reply = (id: number, result: unknown, sessionId?: string) => { h.agentReply?.(key(id)); toClient(sessionId ? { id, result, sessionId } : { id, result }); };
+    const fail = (id: number, message: string, sessionId?: string) => { h.agentReply?.(key(id), message); toClient({ id, error: { code: -32000, message }, ...(sessionId ? { sessionId } : {}) }); };
     const isOwnTarget = async (t?: string) => !!t && (ownTargets.has(t) || (await this.ownTargetIds()).has(t));
     const windowIdFor = (t: string) => {
       for (const [w, x] of windowIds) if (x === t) return w;
@@ -176,6 +183,7 @@ export class SessionProxy {
       if (msg.id !== undefined) {
         const f = filters.get(msg.id);
         filters.delete(msg.id);
+        h.agentReply?.(key(msg.id), msg.error?.message);
         return toClient(f ? f(msg) : msg);
       }
       const p = msg.params ?? {};
@@ -209,6 +217,7 @@ export class SessionProxy {
           debuggerSetup.delete(p.sessionId);
           break;
       }
+      h.agentEvent?.(msg.method, p, msg.sessionId);
       toClient(msg);
     });
 
@@ -219,6 +228,7 @@ export class SessionProxy {
     const handle = async (raw: string) => {
       const msg = JSON.parse(raw);
       const { id, method, params = {}, sessionId } = msg;
+      if (typeof id === 'number') h.agentCommand?.(key(id), method, params, sessionId);
       if (sessionId && foreignSessions.has(sessionId)) return fail(id, 'Session not found', sessionId);
       const page = sessionId ? pageOf.get(sessionId) : undefined;
       if (page && typeof method === 'string' && method.startsWith('Debugger.')) {

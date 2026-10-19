@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensureHome, log, paths } from '../shared/paths';
-import { launcherScript, processList } from '../shared/platform';
+import { clientOfCommand } from '../shared/session-info';
+import { browserScript, launcherScript, processList } from '../shared/platform';
 import { analyze, isServerToken, wrapper } from '../shared/server-command';
-import { applyClaude, claudeConfigFile, claudeProjects, restoreClaude, scanClaude } from './claude';
-import { applyCodex, codexTrustedProjects, restoreCodex, scanCodex } from './codex';
-import { applyJson, restoreJson, scanJsonClients } from './json-clients';
-import { ChangeResult, ClientKind, Finding, isActionable, manifest } from './model';
+import { claudeConfigFile, claudeProjects, restoreClaude, scanClaude } from './claude';
+import { codexTrustedProjects, restoreCodex, scanCodex } from './codex';
+import { restoreJson, scanJsonClients } from './json-clients';
+import { ChangeResult, ClientKind, Finding, manifest } from './model';
 
 export function scan(): Finding[] {
   // Project files of the JSON clients: in the projects Claude Code and Codex know.
@@ -21,8 +22,11 @@ export function scan(): Finding[] {
  */
 export function installLauncher(appExecutable: string, launcherJs: string): string {
   ensureHome();
-  const content = launcherScript(appExecutable, launcherJs);
-  const dest = paths.launcher;
+  installScript(paths.browser, browserScript(appExecutable, launcherJs));
+  return installScript(paths.launcher, launcherScript(appExecutable, launcherJs));
+}
+
+function installScript(dest: string, content: string): string {
   try { if (fs.readFileSync(dest, 'utf8') === content) return dest; } catch {}
   const tmp = dest + '.new';
   fs.writeFileSync(tmp, content, { mode: 0o755 });
@@ -50,33 +54,14 @@ function removeIfEmpty(dir: string) {
   try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch {}
 }
 
-/** Applies findings. Each file is backed up once before its first change. */
-export function apply(findings: Finding[]): ChangeResult[] {
-  ensureHome();
-  const dir = newBackupDir();
-  const results: ChangeResult[] = [];
-  for (const f of findings.filter(isActionable)) {
-    try {
-      const b = backup(backupFileFor(f), dir);
-      const entry = f.client === 'claude' ? applyClaude(f, b) : f.client === 'codex' ? applyCodex(f, b) : applyJson(f, b);
-      manifest.append(entry);
-      results.push({ finding: f, ok: true, message: f.shadow ? 'Local override added; .mcp.json stays unchanged.' : 'Taken over.' });
-      log(`install: applied ${f.id}`);
-    } catch (e: any) {
-      results.push({ finding: f, ok: false, message: e.message });
-      log(`install: failed ${f.id}: ${e.message}`);
-    }
-  }
-  removeIfEmpty(dir);
-  return results;
-}
-
 /**
- * Removes Habitab from all configurations. Entries changed by the user
- * after installation are unwrapped, never overwritten with an old backup.
+ * Removes the 0.2 launcher wrapper from the given entries (or from all).
+ * Entries changed by the user after installation are unwrapped, never
+ * overwritten with an old backup. Each file is backed up once first.
  */
-export function uninstall(only?: Finding[]): ChangeResult[] {
-  const wrapped = (only ?? scan()).filter(f => (f.status === 'migrated' || f.status === 'updatePath') && f.scope !== 'plugin' && f.scope !== 'managed');
+export function unwrap(only?: Finding[]): ChangeResult[] {
+  ensureHome();
+  const wrapped = (only ?? scan()).filter(f => f.status === 'unwrap' && f.scope !== 'plugin' && f.scope !== 'managed');
   const dir = newBackupDir();
   const results: ChangeResult[] = [];
   for (const f of wrapped) {
@@ -86,7 +71,7 @@ export function uninstall(only?: Finding[]): ChangeResult[] {
       const inner = wrapper.unwrap(f.command, f.args)!;
       const message = f.client === 'claude' ? restoreClaude(f, m, inner) : f.client === 'codex' ? restoreCodex(f, m) : restoreJson(f, m);
       results.push({ finding: f, ok: true, message });
-      log(`uninstall: ${f.id}: ${message}`);
+      log(`unwrap: ${f.id}: ${message}`);
     } catch (e: any) {
       results.push({ finding: f, ok: false, message: e.message });
     }
@@ -97,57 +82,51 @@ export function uninstall(only?: Finding[]): ChangeResult[] {
 
 export interface LegacyServer {
   pid: number; client: string; clientPid?: number;
-  /** The client already runs a Habitab server (e.g. after /mcp reconnect); this one is a leftover. */
+  /** The client already runs a server with its browser in Habitab (e.g. after /mcp reconnect); this one is a leftover. */
   replaced: boolean;
 }
 
 /**
- * chrome-devtools-mcp servers that run without Habitab although Habitab
- * could manage them. Their sessions use the old configuration until the
- * client restarts the server. One entry per client process.
+ * chrome-devtools-mcp servers that run without a browser bridge below them:
+ * started before the global config was set, or through a 0.2 launcher. Their
+ * sessions keep their old browser until the client restarts the server. One
+ * entry per client process.
  */
 export function legacyServers(): LegacyServer[] {
   const rows = processList();
   const byPid = new Map(rows.map(r => [r.pid, r]));
   const tokens = (cmd: string) => cmd.split(/\s+/).filter(Boolean);
   const isServer = (cmd: string) => tokens(cmd).some(isServerToken);
-  // The launcher's own command line contains the wrapped server command.
+  // The `habitab mcp -- <server>` pass-through (0.2 configurations) has the server tokens in its own command line.
   const isLauncher = (cmd: string) => /(^|\/)habitab(\.cmd)?(\s|$)/.test(cmd) || cmd.includes('ELECTRON_RUN_AS_NODE') || cmd.includes('launcher/main.js');
+  // The browser bridge (`habitab browser`, see cd4a.ts) runs below the server it serves.
+  const isBridge = (cmd: string) => /launcher\/main\.js browser(\s|$)/.test(cmd) || /(^|\/)habitab-browser(\s|$)/.test(cmd);
   const isClient = (cmd: string) => !!clientOfCommand(cmd);
   const ancestors = (r: typeof rows[number]) => {
     const chain: typeof rows = [];
     for (let p = byPid.get(r.ppid); p && chain.length < 12; p = byPid.get(p.ppid)) chain.push(p);
     return chain;
   };
-  const withHabitab = new Set(rows.filter(r => isLauncher(r.command) && isServer(r.command)).map(r => ancestors(r).find(p => isClient(p.command))?.pid));
+  const bridges = rows.filter(r => isBridge(r.command));
+  const bridged = new Set(bridges.flatMap(r => ancestors(r).map(p => p.pid)));
+  const withHabitab = new Set(bridges.map(r => ancestors(r).find(p => isClient(p.command))?.pid));
   const result = new Map<number, LegacyServer>();
   for (const r of rows) {
     const t = tokens(r.command);
     const idx = t.findIndex(isServerToken);
     if (idx < 0 || isLauncher(r.command) || analyze(t, idx).mode !== 'managed') continue;
     const chain = ancestors(r);
-    if (chain.some(p => isLauncher(p.command))) continue;
+    if (bridged.has(r.pid)) continue;
     // Only the topmost process of an npx/npm/node chain.
     if (chain[0] && isServer(chain[0].command)) continue;
     const client = chain.find(p => isClient(p.command));
     const key = client?.pid ?? -r.pid;
     if (result.has(key)) continue;
-    result.set(key, { pid: r.pid, client: client ? clientOfCommand(client.command)! : 'unknown', clientPid: client?.pid, replaced: !!client && withHabitab.has(client.pid) });
+    result.set(key, { pid: r.pid, client: client ? clientOfCommand(client.command) as ClientKind : 'unknown', clientPid: client?.pid, replaced: !!client && withHabitab.has(client.pid) });
   }
   return [...result.values()];
 }
 
-/** The MCP client a process is, judged by its command line. */
-function clientOfCommand(cmd: string): ClientKind | undefined {
-  const exe = path.basename(cmd.split(' ')[0]);
-  if (/(^|\/)claude(\s|$)/.test(cmd) || /\/claude\/versions\//.test(cmd)) return 'claude';
-  if (/(^|\/)codex(\s|$)/.test(cmd) || exe.includes('codex')) return 'codex';
-  if (/(^|\/)opencode(\s|$)/.test(cmd)) return 'opencode';
-  if (cmd.includes('/Cursor.app/')) return 'cursor';
-  if (cmd.includes('/Windsurf.app/')) return 'windsurf';
-  if (/(^|\/)gemini(\s|$)/.test(cmd)) return 'gemini';
-  return undefined;
-}
 
 export interface LegacyBrowser { pid: number; profile: string; orphaned: boolean; }
 

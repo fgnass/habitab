@@ -11,15 +11,14 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import readline from 'node:readline';
 import { demoSite } from './demo-site.mjs';
+import { bridgeEnv, fakeClient } from './bridge-env.mjs';
 import { McpClient, sleep } from './mcp-client.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
 // The Electron binary itself: killing the .bin wrapper would leave the app running.
 const electronBin = createRequire(import.meta.url)('electron');
 const tmp = fs.mkdtempSync(path.join(process.env.TEST_TMP ?? os.tmpdir(), 'hb-show-'));
-const env = { HABITAB_HOME: path.join(tmp, 'home'), HABITAB_SOCKET: process.env.HABITAB_SOCKET ?? path.join(os.tmpdir(), `hb-show-${process.pid}.sock`), HABITAB_NO_APP_LAUNCH: '1', HABITAB_TEST_CONTROL: '1', HABITAB_TEST_VISIBLE: process.env.HABITAB_TEST_VISIBLE ?? '1', CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1',
-  // The preview may run inside a Claude Code session: its inbox must never get demo feedback.
-  CLAUDE_CODE_MESSAGING_SOCKET: '', CLAUDE_CODE_MESSAGING_TOKEN: '', HABITAB_CODEX_COMMAND: '' };
+const env = bridgeEnv(tmp, { HABITAB_TEST_VISIBLE: process.env.HABITAB_TEST_VISIBLE ?? '1' });
 const app = spawn(electronBin, [root], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'ignore'] });
 const events = [];
 readline.createInterface({ input: app.stdout }).on('line', l => { try { events.push(JSON.parse(l)); } catch {} });
@@ -30,18 +29,17 @@ const control = line => app.stdin.write(line + '\n');
 const page = http.createServer(demoSite);
 await new Promise(r => page.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${page.address().port}`;
-const launcher = ['node', path.join(root, 'dist/launcher/main.js'), 'mcp', '--', 'npx', '-y', 'chrome-devtools-mcp@latest', '--isolated'];
-const mk = async (name, clientName, url, meta) => {
+const mk = async (name, kind, url) => {
   const d = path.join(tmp, name); fs.mkdirSync(path.join(d, '.git'), { recursive: true });
-  const c = new McpClient(launcher[0], launcher.slice(1), { env, cwd: d, clientName });
+  const c = new McpClient(fakeClient(env, kind), [], { env, cwd: d });
   await c.initialize();
-  await c.tool('navigate_page', { pageId: 1, url }, meta);
+  await c.tool('navigate_page', { pageId: 1, url });
   return c;
 };
 // A short, realistic run per agent, so the sidebar and the timeline show real work.
 // Real agents think between tool calls; the pauses also give each step its own screenshot.
 const think = () => sleep(900);
-const a = await mk('juice-shop', 'claude-code', `${base}/shop`, undefined);
+const a = await mk('juice-shop', 'claude', `${base}/shop`);
 for (const [tool, args] of [
   ['evaluate_script', { pageId: 1, function: '() => { window.scrollTo({ top: 520 }); return scrollY; }' }],
   ['new_page', { url: `${base}/shop/juice/blood-orange` }],
@@ -50,7 +48,7 @@ for (const [tool, args] of [
   ['new_page', { url: `${base}/shop/checkout` }],
   ['list_console_messages', { pageId: 4 }],
 ]) { await think(); await a.tool(tool, args); }
-const b = await mk('relay-docs', 'codex-mcp-client', `${base}/docs/messages/send`, { threadId: '019e1c2a-77aa-7c10-b0f3-1d2e3f4a5b6c' });
+const b = await mk('relay-docs', 'codex', `${base}/docs/messages/send`);
 await sleep(800);
 const st = await new Promise(r => { const n = events.length; control('state'); const t = setInterval(() => { const e = events.slice(n).find(x => x.state); if (e) { clearInterval(t); r(e.state); } }, 50); });
 const first = st.sessions.find(s => s.client === 'claude');

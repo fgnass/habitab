@@ -6,7 +6,10 @@
   body { display: grid; place-items: center; background: var(--page); }
   .box { max-width: 460px; text-align: center; padding: 30px; }
   /* Behind a page with its own size (responsive mode, agent resize): a plain backdrop. */
-  body.framed { background: var(--bar); }
+  body.framed { background: var(--backdrop); }
+  /* Edge and soft shadow just outside an emulated page (the page covers the rest). */
+  #edge { position: fixed; display: none; pointer-events: none; box-shadow: 0 0 0 1px var(--border), 0 2px 14px rgba(0, 0, 0, .12); }
+  body.framed #edge.on { display: block; }
   body.framed .box { visibility: hidden; }
   /* Resize handles next to an emulated page (responsive mode). */
   .handle { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, var(--text) 22%, transparent); }
@@ -46,6 +49,7 @@
   <button id="b" class="primary"></button>
   <div id="meta" class="meta"></div>
 </div>
+<div id="edge"></div>
 <div id="hRight" class="handle" title="Drag to set the width · double-click to fill"></div>
 <div id="hBottom" class="handle" title="Drag to set the height · double-click to fill"></div>
 <div id="hCorner" class="handle" title="Drag to set the size · double-click to fill"></div>

@@ -1,6 +1,8 @@
 // Analysis of a configured MCP command line (command + args): finds the
-// chrome-devtools-mcp token, classifies browser options and rewrites the
-// server arguments for a session browser inside Habitab.
+// chrome-devtools-mcp token and classifies its browser options. The server
+// gets its browser through its global config (see installer/cd4a.ts), so
+// the command line itself is never changed; old launcher wrappers are
+// recognized (`wrapper`) and removed.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,12 +45,6 @@ const STRING_OPTIONS = new Set([
   'screenshotMaxHeight', 'clearcutEndpoint', 'clearcutForceFlushIntervalMs', 'experimentalDataFormat',
 ]);
 const ALIASES: Record<string, string> = { u: 'browserUrl', w: 'wsEndpoint', e: 'executablePath', workspace: 'filesystemRoot' };
-
-/** Options that control how the server launches a browser. Removed before start. */
-export const LAUNCH_OPTIONS = new Set([
-  'isolated', 'headless', 'executablePath', 'channel', 'chromeArg', 'ignoreDefaultChromeArg', 'proxyServer',
-  'acceptInsecureCerts', 'userDataDir',
-]);
 
 export interface Option { key: string; negated: boolean; value?: string; start: number; end: number; }
 
@@ -129,36 +125,7 @@ export function parseCommand(command: string, args: string[]): ServerCommand | u
   return index < 0 ? undefined : analyze(argv, index);
 }
 
-/** Server arguments for a server that connects to a Habitab session browser. */
-export function rewriteServerArgs(args: string[], browserUrl: string, sanitizedConfig?: string): string[] {
-  const drop = new Set<number>();
-  for (const o of parseOptions(args)) {
-    if (LAUNCH_OPTIONS.has(o.key) || (o.key === 'config' && sanitizedConfig)) {
-      for (let i = o.start; i < o.end; i++) drop.add(i);
-    }
-  }
-  const result = args.filter((_, i) => !drop.has(i));
-  if (sanitizedConfig) result.push('--config', sanitizedConfig);
-  result.push('--browserUrl', browserUrl);
-  return result;
-}
-
-/** Copy of a --config file without launch options, or undefined if not needed. */
-export function sanitizeConfig(args: string[], dir: string): string | undefined {
-  const configPath = parseOptions(args).filter(o => o.key === 'config').pop()?.value;
-  if (!configPath) return undefined;
-  try {
-    const json = JSON.parse(fs.readFileSync(configPath.replace(/^~(?=\/)/, os.homedir()), 'utf8'));
-    const kept = Object.fromEntries(Object.entries(json).filter(([k]) => !LAUNCH_OPTIONS.has(camel(k))));
-    if (Object.keys(kept).length === Object.keys(json).length) return undefined;
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `config-${process.pid}.json`);
-    fs.writeFileSync(file, JSON.stringify(kept), { mode: 0o600 });
-    return file;
-  } catch { return undefined; }
-}
-
-/** The wrapped form written into client configurations. */
+/** The wrapper that Habitab 0.2 wrote into client configurations; found and removed by the installer. */
 export const wrapper = {
   subcommand: 'mcp',
   isLauncher(command: string): boolean {

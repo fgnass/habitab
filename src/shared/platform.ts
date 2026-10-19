@@ -31,10 +31,15 @@ export function launcherFileName(): string {
   return platform === 'win32' ? 'habitab.cmd' : 'habitab';
 }
 
+export function browserFileName(): string {
+  return platform === 'win32' ? 'habitab-browser.cmd' : 'habitab-browser';
+}
+
 /**
- * Stable launcher script. It runs the launcher with the Node runtime inside
- * the app (ELECTRON_RUN_AS_NODE), so no Node installation is needed. If the
- * app is gone, it runs the original command unchanged.
+ * Stable `habitab` command. It runs the CLI with the Node runtime inside the
+ * app (ELECTRON_RUN_AS_NODE), so no Node installation is needed. Habitab 0.2
+ * configurations call it as `habitab mcp -- <command>`: if the app is gone,
+ * it runs that command unchanged.
  */
 export function launcherScript(appExecutable: string, launcherJs: string): string {
   if (platform === 'win32') {
@@ -45,7 +50,7 @@ export function launcherScript(appExecutable: string, launcherJs: string): strin
       `  "${appExecutable}" "${launcherJs}" %*`,
       `  exit /b %ERRORLEVEL%`,
       ')',
-      'rem Habitab is not installed: run the original command after "mcp --".',
+      'rem Habitab is not installed: run the command after "mcp --" unchanged.',
       'shift & shift',
       '%1 %2 %3 %4 %5 %6 %7 %8 %9',
       '',
@@ -53,18 +58,59 @@ export function launcherScript(appExecutable: string, launcherJs: string): strin
   }
   const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
   return `#!/bin/sh
-# Habitab launcher. Client configurations call this file:
-#   habitab mcp -- <original command...>
+# The habitab command. Habitab 0.2 configurations call this file as
+#   habitab mcp -- <command...>
 APP=${q(appExecutable)}
 JS=${q(launcherJs)}
 if [ -x "$APP" ] && [ -f "$JS" ] && [ "$HABITAB_DISABLE" != "1" ]; then
   ELECTRON_RUN_AS_NODE=1 exec "$APP" "$JS" "$@"
 fi
-# Habitab is not installed: run the original command unchanged.
+# Habitab is not installed: run the command after "mcp --" unchanged.
 [ "$1" = "mcp" ] && shift
 [ "$1" = "--" ] && shift
 exec "$@"
 `;
+}
+
+/**
+ * The browser executable for chrome-devtools-mcp's global config
+ * (executablePath, see `habitab cd4a`). Puppeteer starts it in place of
+ * Chrome, with CDP on the pipe fds 3 and 4; `habitab browser` bridges them
+ * to the session browser in the app. Without the app, the real Chrome runs.
+ */
+export function browserScript(appExecutable: string, launcherJs: string): string {
+  if (platform === 'win32') {
+    return [
+      '@echo off',
+      'set ELECTRON_RUN_AS_NODE=1',
+      `"${appExecutable}" "${launcherJs}" browser %*`,
+      'exit /b %ERRORLEVEL%',
+      '',
+    ].join('\r\n');
+  }
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  return `#!/bin/sh
+# Habitab browser. chrome-devtools-mcp starts this file in place of Chrome
+# (executablePath in its global config, see "habitab cd4a").
+APP=${q(appExecutable)}
+JS=${q(launcherJs)}
+if [ -x "$APP" ] && [ -f "$JS" ]; then
+  ELECTRON_RUN_AS_NODE=1 exec "$APP" "$JS" browser "$@"
+fi
+echo "habitab-browser: Habitab is not installed at $APP. Remove executablePath from the chrome-devtools-mcp config." >&2
+exit 1
+`;
+}
+
+/** The real Chrome, for the browser script when Habitab is disabled or unreachable. */
+export function systemChrome(): string | undefined {
+  const home = os.homedir();
+  const candidates = platform === 'darwin'
+    ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', path.join(home, 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome')]
+    : platform === 'win32'
+      ? [process.env['PROGRAMFILES'], process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA].filter(Boolean).map(d => path.join(d!, 'Google', 'Chrome', 'Application', 'chrome.exe'))
+      : (process.env.PATH ?? '').split(':').flatMap(dir => ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'].map(n => path.join(dir, n)));
+  return candidates.find(c => { try { fs.accessSync(c, fs.constants.X_OK); return true; } catch { return false; } });
 }
 
 export interface ProcessRow { pid: number; ppid: number; command: string; }

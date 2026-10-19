@@ -14,8 +14,6 @@
   .size button { width: 18px; height: 18px; font-size: 10px; }
   .hidden { display: none !important; }
   /* An agent waits for the user's feedback. */
-  #annotate.waiting { color: #fff; background: var(--accent); animation: ask 1.6s ease-in-out infinite; }
-  @keyframes ask { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); } }
   /* Without the sidebar the window buttons (traffic lights) sit on the top bar. */
   :root[data-platform=darwin] body.no-sidebar { padding-left: 84px; }
   .held { color: #b7791f; background: color-mix(in srgb, #f6c344 28%, transparent); }
@@ -37,6 +35,7 @@
 <button id="debugger" class="wide hidden"><span id="debuggerIcon"></span><span id="debuggerText"></span></button>
 <button id="problems" class="wide hidden"><span data-icon="circle-alert"></span><span id="problemsText"></span></button>
 <button id="hold" class="wide" title="Hold the agent's new tool calls (⇧⌘P)"><span data-icon="hand"></span><span id="holdText">Take Control</span></button>
+<button id="fork" class="wide hidden" title="Open this page in your own tab: the agent goes on here (⇧⌘O)"><span data-icon="copy-plus"></span><span>Own Tab</span></button>
 <button id="annotate" title="Mark an area for the agent (⇧⌘A)"><span data-icon="message-square-plus"></span></button>
 <button id="responsive" title="Responsive mode (⇧⌘M)"><span data-icon="monitor-smartphone"></span></button>
 <button id="devtools" title="DevTools (⌥⌘I)"><span data-icon="code-xml"></span></button>

@@ -2,8 +2,9 @@
 import { spawn } from 'node:child_process';
 
 export class McpClient {
-  constructor(command, args, { env = {}, cwd, clientName = 'habitab-test' } = {}) {
-    this.proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env }, cwd });
+  constructor(command, args, { env = {}, cwd, clientName = 'habitab-test', detached = false } = {}) {
+    // detached: own process group, so a test can end the client with everything below it (process.kill(-pid)).
+    this.proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env }, cwd, detached });
     this.clientName = clientName;
     this.pending = new Map();
     /** Notifications from the server (no id), e.g. Claude Code channel events. */

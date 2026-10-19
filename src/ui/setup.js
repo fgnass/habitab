@@ -1,14 +1,14 @@
 const api = window.habitab;
 const $ = id => document.getElementById(id);
 const main = $('main');
-let data = { findings: [], legacyServers: [], legacyBrowsers: [] };
+let data = { cd4a: null, findings: [], legacyServers: [], legacyBrowsers: [] };
 let results = [];
+let cd4aResult = null;
 const selected = new Set();
 const open = new Set();
 
 const STATE = {
-  migrate: ['To take over', 'todo'], updatePath: ['Path update', 'todo'], migrated: ['Runs through Habitab', 'ok'],
-  external: ['External browser', ''], persistentProfile: ['Persistent profile', 'warn'], unsupported: ['Not supported', 'warn'],
+  unwrap: ['Old launcher entry', 'todo'], ok: ['Uses Habitab', 'ok'], conflict: ['Own browser', 'warn'], unsupported: ['Not supported', 'warn'],
 };
 
 function el(tag, cls, text) {
@@ -76,56 +76,85 @@ function item({ id, lead, name, badge, whereText, whereTitle, state, dim, action
 }
 
 function findingItem(f) {
+  const ready = !!data.cd4a?.habitab;
   let lead;
   if (f.actionable) {
     lead = el('input');
     lead.type = 'checkbox';
     lead.checked = selected.has(f.id);
     lead.onchange = () => { lead.checked ? selected.add(f.id) : selected.delete(f.id); update(); };
-  } else if (f.status === 'migrated') lead = icon('check', 'ok');
-  else if (f.status === 'external') lead = icon('dash', 'off');
+  } else if (f.status === 'ok') lead = icon(ready ? 'check' : 'dash', ready ? 'ok' : 'off');
   else lead = icon('alert', 'warn');
-  const details = [];
-  if (f.status !== 'migrated') details.push(el('p', '', f.detail));
-  details.push(el('div', 'label', f.proposedLine ? 'Now' : 'Command'), el('code', '', f.line));
-  if (f.proposedLine) details.push(el('div', 'label', 'After taking over'), el('code', '', f.proposedLine));
-  const [text, cls] = STATE[f.status] ?? [f.status, ''];
-  return item({
-    id: f.id, lead, name: f.name, badge: f.client, whereText: where(f), whereTitle: f.location,
-    state: [f.shadow && f.actionable ? 'To take over (local override)' : text, cls],
-    dim: !f.actionable && f.status !== 'migrated', details,
-  });
+  const details = [el('p', '', f.detail), el('div', 'label', f.proposedLine ? 'Now' : 'Command'), el('code', '', f.line)];
+  if (f.proposedLine) details.push(el('div', 'label', 'After the change'), el('code', '', f.proposedLine));
+  let [text, cls] = STATE[f.status] ?? [f.status, ''];
+  if (f.status === 'ok' && !ready) [text, cls] = ['Ready', ''];
+  return item({ id: f.id, lead, name: f.name, badge: f.client, whereText: where(f), whereTitle: f.location, state: [text, cls], dim: f.status === 'conflict' || f.status === 'unsupported', details });
 }
 
 function summary() {
+  const c = data.cd4a;
   const todo = data.findings.filter(f => f.actionable).length;
-  const done = data.findings.filter(f => f.status === 'migrated').length;
   const restart = data.legacyServers.filter(l => !l.replaced).length;
-  if (!data.findings.length) return 'No chrome-devtools-mcp entries found in Claude Code or Codex.';
-  if (todo) return `Habitab can take over ${todo} chrome-devtools-mcp ${todo === 1 ? 'entry' : 'entries'}. Agents then open their browsers here. The server and its arguments stay the same, and Habitab backs up each file first.`;
-  if (!done) return 'None of the chrome-devtools-mcp entries can run through Habitab.';
-  if (restart) return `Set up. ${restart} running ${restart === 1 ? 'session still uses' : 'sessions still use'} the old configuration.`;
+  if (!c) return 'Checking…';
+  if (c.invalid) return `The global config of chrome-devtools-mcp is not valid JSON (${tilde(c.file)}).`;
+  if (c.conflicts.length) return `The global config names ${c.conflicts.join(', ')}, which cannot be combined with Habitab's browser. Remove it there first.`;
+  if (!c.habitab) return 'One setting gives every chrome-devtools-mcp its browser in Habitab: its global config. Client configurations stay as they are.';
+  if (todo) return `Set up. ${todo} ${todo === 1 ? 'entry still has' : 'entries still have'} the launcher of Habitab 0.2 in front of the server; it is no longer needed.`;
+  if (restart) return `Set up. ${restart} running ${restart === 1 ? 'session still uses' : 'sessions still use'} the old browser.`;
+  const conflicts = data.findings.filter(f => f.status === 'conflict').length;
+  if (conflicts) return `All set. ${conflicts} ${conflicts === 1 ? 'entry names' : 'entries name'} its own browser and will not start until it is kept out of the global config.`;
   return 'All set. Agents open their browsers in Habitab.';
+}
+
+/** The global config of chrome-devtools-mcp: the one setting that matters. */
+function cd4aItem() {
+  const c = data.cd4a;
+  const ok = c.habitab && !c.invalid;
+  const blocked = c.invalid || c.conflicts.length;
+  const details = [
+    el('p', '', 'chrome-devtools-mcp (1.10 or newer) reads this file wherever it is started from, also when a CLI bundles the server. ' +
+      'With Habitab\'s browser as executablePath, the server starts it in place of Chrome and the session appears here. ' +
+      'A server that names its own browser (--browserUrl, --autoConnect, --channel) would not start: give it CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY=1 in its env.'),
+    el('div', 'label', 'File'), el('code', '', tilde(c.file)),
+  ];
+  if (c.exists && !c.invalid) details.push(el('div', 'label', 'Content'), el('code', '', JSON.stringify(c.config)));
+  if (c.invalid) details.push(el('div', 'label', 'Problem'), el('code', '', c.invalid));
+  return item({
+    id: 'cd4a', lead: icon(ok ? 'check' : blocked ? 'alert' : 'dash', ok ? 'ok' : blocked ? 'warn' : 'off'), name: 'Global config',
+    whereText: 'executablePath', whereTitle: c.file,
+    state: ok ? ['Habitab\'s browser', 'ok'] : blocked ? ['Blocked', 'warn'] : ['Not set', 'todo'], details,
+  });
 }
 
 function render() {
   main.replaceChildren();
   $('summary').textContent = summary();
 
-  if (results.length) {
-    const bad = results.filter(r => !r.ok);
+  if (results.length || cd4aResult) {
+    const bad = [...(cd4aResult && !cd4aResult.ok ? [cd4aResult.message] : []), ...results.filter(r => !r.ok).map(r => `${r.finding.name} (${where(r.finding)}): ${r.message}`)];
     const b = el('div', 'banner ' + (bad.length ? 'bad' : 'ok'));
-    if (bad.length) for (const r of bad) b.appendChild(el('div', '', `${r.finding.name} (${where(r.finding)}): ${r.message}`));
-    else b.textContent = `Done: ${results.length} ${results.length === 1 ? 'entry' : 'entries'} changed.`;
+    if (bad.length) for (const m of bad) b.appendChild(el('div', '', m));
+    else b.textContent = results.length ? `Done: ${results.length} ${results.length === 1 ? 'entry' : 'entries'} changed.` : 'Done.';
     main.appendChild(b);
   }
 
-  if (data.findings.length) {
-    main.appendChild(el('h2', '', 'Configurations'));
+  if (data.cd4a) {
+    main.appendChild(el('h2', '', 'Browser of chrome-devtools-mcp'));
     const card = el('div', 'card');
-    const order = f => (f.actionable ? 0 : f.status === 'migrated' ? 1 : 2);
-    for (const f of [...data.findings].sort((a, b) => order(a) - order(b))) card.appendChild(findingItem(f));
+    card.appendChild(cd4aItem());
     main.appendChild(card);
+  }
+
+  // Client configurations stay as they are; only entries that need attention are listed.
+  const attention = data.findings.filter(f => f.status !== 'ok');
+  if (attention.length) {
+    main.appendChild(el('h2', '', 'Client Configurations That Need Attention'));
+    const card = el('div', 'card');
+    const order = f => (f.actionable ? 0 : 1);
+    for (const f of [...attention].sort((a, b) => order(a) - order(b))) card.appendChild(findingItem(f));
+    main.appendChild(card);
+    main.appendChild(el('p', 'hint', 'Entries wrapped by Habitab 0.2 get their original command back. An entry with its own browser needs CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY=1 in its env.'));
   }
 
   const restart = data.legacyServers.filter(l => !l.replaced);
@@ -171,31 +200,38 @@ function render() {
 }
 
 function update() {
-  $('apply').textContent = selected.size ? `Take Over ${selected.size}` : 'Done';
-  $('uninstall').disabled = !data.findings.some(f => f.status === 'migrated' || f.status === 'updatePath');
+  const c = data.cd4a;
+  const needsSetup = c && !c.habitab && !c.invalid && !c.conflicts.length;
+  $('apply').textContent = needsSetup ? (selected.size ? `Set Up and Clean ${selected.size}` : 'Set Up') : selected.size ? `Clean ${selected.size}` : 'Done';
+  $('apply').disabled = !!c?.invalid || !!c?.conflicts.length;
+  $('uninstall').disabled = !(c?.habitab || data.findings.some(f => f.actionable));
 }
 
 async function scan() {
   busy('Checking…');
   data = await api.setup('scan');
   selected.clear();
-  // Personal configurations are preselected; shared project files only on request.
-  for (const f of data.findings) if (f.actionable && (f.scope !== 'project' || f.shadow)) selected.add(f.id);
+  for (const f of data.findings) if (f.actionable) selected.add(f.id);
   busy();
   render();
 }
 
-$('rescan').onclick = () => { results = []; scan(); };
+$('rescan').onclick = () => { results = []; cd4aResult = null; scan(); };
 $('apply').onclick = async () => {
-  if (!selected.size) return window.close();
+  const c = data.cd4a;
+  if (c?.habitab && !selected.size) return window.close();
   busy('Applying…');
-  results = (await api.setup('apply', [...selected])).results ?? [];
+  const r = await api.setup('apply', [...selected]);
+  results = r.results ?? [];
+  cd4aResult = r.cd4a ?? null;
   await scan();
 };
 $('uninstall').onclick = async () => {
-  if (!confirm('Remove Habitab from all configurations?\n\nEach entry gets its original command back. Other settings, also ones you changed later, stay as they are. Running sessions use Habitab until they restart.')) return;
+  if (!confirm('Remove Habitab from the configurations?\n\nThe global config of chrome-devtools-mcp loses Habitab\'s browser, and old launcher entries get their original command back. Running sessions keep their browser in Habitab until they restart.')) return;
   busy('Removing…');
-  results = (await api.setup('uninstall')).results ?? [];
+  const r = await api.setup('uninstall');
+  results = r.results ?? [];
+  cd4aResult = r.cd4a ?? null;
   await scan();
 };
 scan();

@@ -95,10 +95,17 @@ const SHOP_CSS = `
   .field { display: grid; gap: 6px; margin-bottom: 14px; } .field span { font-size: 13px; color: var(--muted); font-weight: 600; }
   .field input { font: inherit; padding: 12px 14px; border-radius: 4px; border: 1px solid #cfcfcf; background: #fff; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } .cols3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 14px; }
-  .ship { display: grid; gap: 10px; } .ship div { display: flex; justify-content: space-between; padding: 14px 16px; border-radius: 4px; border: 1px solid var(--line); font-size: 14px; }
+  .ship { display: grid; gap: 10px; } .ship div { cursor: pointer; display: flex; justify-content: space-between; padding: 14px 16px; border-radius: 4px; border: 1px solid var(--line); font-size: 14px; }
   .ship div.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
   .steps { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); margin: 26px 0 0; } .steps b { color: var(--ink); }
-  footer { border-top: 1px solid var(--line); margin-top: 20px; padding: 26px 32px; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; max-width: 1180px; margin-left: auto; margin-right: auto; }
+  footer { border-top: 1px solid var(--line); margin-top: 20px; padding: 26px 32px; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; max-width: 1180px; margin-left: auto; margin-right: auto; }  /* Phone width (responsive mode screenshots). */
+  @media (max-width: 700px) {
+    nav { gap: 16px; padding: 0 16px; height: 58px; } .logo { white-space: nowrap; font-size: 19px; }
+    nav .links, nav .right span { display: none; }
+    .wrap { padding: 0 16px; } footer { padding: 22px 16px; flex-direction: column; gap: 6px; }
+    .hero, .pdp, .two, .cols, .cols3 { grid-template-columns: 1fr; } .hero { padding: 28px 24px; } .two { gap: 20px; padding-top: 20px; }
+    .panel { padding: 20px 18px; } .grid { grid-template-columns: 1fr 1fr; gap: 14px; } .usp { flex-wrap: wrap; gap: 8px 20px; } .facts { grid-template-columns: 1fr; }
+  }
 `;
 
 const LOGO = `<svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#1a1a1a"/><circle cx="16" cy="16" r="11" fill="#f28c28"/><path d="M16 5 V27 M5 16 H27 M8.2 8.2 L23.8 23.8 M23.8 8.2 L8.2 23.8" stroke="#1a1a1a" stroke-width="1.5"/><circle cx="16" cy="16" r="2.4" fill="#1a1a1a"/></svg>`;
@@ -115,9 +122,17 @@ function shopChrome(active, body) {
 
 const tint = j => `background: ${j.bg}`;
 
+/**
+ * Changes an agent made to the shop (the video). On a phone, the hero's bottles
+ * are wider than the screen and push the headline over the edge; `hero-overflow`
+ * fixes that.
+ */
+export const fixes = new Set();
+const HERO_FIX_CSS = `@media (max-width: 700px) { .hero { grid-template-columns: minmax(0, 1fr); } .hero h1 { font-size: 36px; } .hero .bottles svg { width: 96px; height: 160px; } }`;
+
 function shopHome() {
   const [a, b, c] = [JUICES[2], JUICES[0], JUICES[4]];
-  return page('Juice Shop — Fresh juice, delivered', SHOP_CSS, shopChrome('Juices', `<div class="wrap">
+  return page('Juice Shop — Fresh juice, delivered', SHOP_CSS + (fixes.has('hero-overflow') ? HERO_FIX_CSS : ''), shopChrome('Juices', `<div class="wrap">
     <section class="hero"><div>
       <h1>Fresh juice. Pressed today, at your door tomorrow.</h1>
       <p>Cold-pressed from whole fruit and vegetables, no sugar, no concentrate. Order by 6 pm for next-morning delivery.</p>
@@ -169,20 +184,23 @@ function shopCart() {
       <p style="color:var(--muted);font-size:13px;margin:14px 0 0">Order by 6 pm for delivery tomorrow morning.</p></div></section></div>`));
 }
 
-function shopCheckout() {
+/** The checkout; `blank`: empty address fields for an agent to fill (video). */
+function shopCheckout(blank = false) {
   const sub = subtotal();
+  const field = (label, value) => `<div class="field"><span>${esc(label)}</span><input aria-label="${esc(label)}" ${blank ? '' : `value="${esc(value)}"`}></div>`;
   // The checkout has bugs on purpose: a failed stock check and a script error (problem list demo).
   const script = `<script>
     fetch('/api/stock?items=blood-orange,carrot-ginger').then(r => { if (!r.ok) console.error('Stock check failed:', r.status, r.statusText); });
+    for (const d of document.querySelectorAll('.ship div')) d.onclick = () => { for (const o of document.querySelectorAll('.ship div')) o.classList.toggle('on', o === d); };
     setTimeout(() => { document.querySelector('#total').textContent = '€' + cart.total.toFixed(2); });
   </script>`;
   return page('Checkout — Juice Shop', SHOP_CSS, shopChrome('', `<div class="wrap">
     <div class="steps">Cart → <b>Delivery</b> → Payment</div>
     <section class="two"><div class="panel"><h2>Delivery address</h2>
-      <div class="field"><span>Email</span><input value="mara.lindqvist@example.com"></div>
-      <div class="cols"><div class="field"><span>First name</span><input value="Mara"></div><div class="field"><span>Last name</span><input value="Lindqvist"></div></div>
-      <div class="field"><span>Street</span><input value="Schanzenstraße 34"></div>
-      <div class="cols3"><div class="field"><span>City</span><input value="Hamburg"></div><div class="field"><span>ZIP</span><input value="20357"></div><div class="field"><span>Country</span><input value="Germany"></div></div>
+      ${field('Email', 'mara.lindqvist@example.com')}
+      <div class="cols">${field('First name', 'Mara')}${field('Last name', 'Lindqvist')}</div>
+      ${field('Street', 'Schanzenstraße 34')}
+      <div class="cols3">${field('City', 'Hamburg')}${field('ZIP', '20357')}${field('Country', 'Germany')}</div>
       <h2 style="margin-top:10px">Delivery slot</h2>
       <div class="ship"><div class="on"><span><b>Tomorrow</b> · 6–9 am</span><b>Free</b></div><div><span><b>Tomorrow</b> · 9–12 am</span><b>Free</b></div><div><span><b>Today</b> · by courier within 2 h</span><b>€4.90</b></div></div>
       <a class="btn primary" style="margin-top:22px" href="#">Continue to payment →</a></div>
@@ -298,7 +316,7 @@ export function demoSite(req, res) {
   if (p === '/' || p === '/shop') return res.end(shopHome());
   if (p.startsWith('/shop/juice/')) return res.end(shopProduct(p.split('/').pop()));
   if (p === '/shop/cart') return res.end(shopCart());
-  if (p === '/shop/checkout') return res.end(shopCheckout());
+  if (p === '/shop/checkout') return res.end(shopCheckout(url.searchParams.has('blank')));
   if (p.startsWith('/docs')) return res.end(docs());
   res.statusCode = 404;
   res.end(page('Not found', SHOP_CSS, '<p style="padding:40px">Not found</p>'));

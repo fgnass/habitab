@@ -1,6 +1,6 @@
-// Launcher <-> app protocol: one JSON object per line over a Unix socket
-// (named pipe on Windows). All fields except `type` are optional, so
-// launchers and apps of different versions can talk to each other.
+// Browser bridge <-> app protocol: one JSON object per line over a Unix
+// socket (named pipe on Windows). All fields except `type` are optional, so
+// bridges and apps of different versions can talk to each other.
 import net from 'node:net';
 import { EventEmitter } from 'node:events';
 
@@ -10,8 +10,6 @@ export interface SessionMeta {
   projectName?: string;
   /** "claude" | "codex" */
   client?: string;
-  clientName?: string;
-  clientVersion?: string;
   /** How `client` was determined: "clientInfo", "env", "process". */
   clientSource?: string;
   clientPid?: number;
@@ -19,39 +17,30 @@ export interface SessionMeta {
   agentSessionId?: string;
   agentSessionSource?: string;
   agentSessionName?: string;
-  roots?: string[];
-  /** Claude Code runs this server as a channel (started with the development channel flag). */
-  channel?: boolean;
-  /** Claude Code gave the server its inbox socket (cross-session messaging): feedback can wake the session. */
+  /** Claude Code gave the server its inbox socket (cross-session messaging): feedback reaches the session as a note. */
   inbox?: boolean;
-  /** Codex has `codex queue`: feedback can be queued as a prompt for the thread (agentSessionId). */
-  codexQueue?: boolean;
+  /** The app talks to Codex's app-server daemon for this thread: tool calls and feedback go through it. */
+  codexAppServer?: boolean;
   serverName?: string;
   originalCommand?: string[];
   startedAt?: string;
 }
 
 export type Message =
-  | { type: 'hello'; sessionId: string; launcherPid: number; meta: SessionMeta; launch?: { proxyServer?: string; viewport?: string; acceptInsecureCerts?: boolean } }
+  /** launcherPid: the bridge; serverPid: the MCP server above it, which outlives the bridge (and the app) and starts a new one. */
+  | { type: 'hello'; sessionId: string; launcherPid: number; serverPid?: number; meta: SessionMeta; launch?: { proxyServer?: string; viewport?: string; acceptInsecureCerts?: boolean } }
   | { type: 'meta'; meta: SessionMeta }
-  /** Launcher needs the browser: app creates the session browser if needed. */
+  /** The bridge needs the browser: the app creates the session browser if needed. */
   | { type: 'attach'; requestId: number }
   | { type: 'endpoint'; requestId: number; port?: number; error?: string }
-  | { type: 'toolStart'; callId: string; tool: string; summary?: string }
-  | { type: 'toolEnd'; callId: string; tool: string; isError: boolean; durationMs: number; detail?: string }
+  /** The user has control: the bridge holds the agent's commands (and releases them by itself after a limit). */
   | { type: 'hold'; hold: boolean }
-  /** The agent waits for the user to mark an area (wait_for_user_feedback). */
-  | { type: 'feedbackRequest'; requestId: string; question?: string }
-  /** The wait ended without an answer (timeout or cancelled by the client). */
-  | { type: 'feedbackCancel'; requestId: string }
-  /** Feedback while no call waits: pushed into the Claude Code session (channel event or inbox message). */
+  /** Feedback for the agent: pushed into the Claude Code session through its inbox socket. */
   | { type: 'feedbackPush'; content: string }
-  /** The user's answer: comments and pages as text, the marked areas as PNGs (base64). */
-  | { type: 'feedbackResult'; requestId: string; text: string; images: string[] }
   | { type: 'bye'; reason: string };
 
-/** Feedback reaches the agent at once, also when no wait_for_user_feedback call waits. */
-export const canPush = (m: SessionMeta): boolean => !!(m.channel || m.inbox || (m.codexQueue && m.agentSessionId));
+/** Feedback reaches the agent as a note (Claude Code inbox, Codex app-server). */
+export const canPush = (m: SessionMeta): boolean => !!(m.inbox || m.codexAppServer);
 
 export class LineSocket extends EventEmitter {
   private buffer = '';

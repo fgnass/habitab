@@ -3,8 +3,10 @@
 //   npm run build && node tests/integration/install.mjs
 //
 // Writes typical client configurations and edge cases into CLAUDE_CONFIG_DIR /
-// CODEX_HOME sandboxes. The real configurations are not read, so the result
-// does not depend on the machine (or on a Habitab setup already applied there).
+// CODEX_HOME sandboxes, plus entries wrapped by the launcher of Habitab 0.2.
+// The real configurations are not read, so the result does not depend on the
+// machine (or on a Habitab setup already applied there). Setup writes the
+// global config of chrome-devtools-mcp (XDG_CONFIG_HOME) and unwraps.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,21 +24,29 @@ for (const d of [claudeDir, codexHome, home, path.join(proj, '.git'), path.join(
 // OpenCode, Cursor, Gemini CLI and Windsurf read their configs below $HOME.
 const userHome = path.join(root, 'home');
 const claudeBin = execFileSync(process.env.SHELL || '/bin/sh', ['-lc', 'command -v claude'], { encoding: 'utf8' }).trim().split('\n').pop();
-const env = { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexHome, HABITAB_HOME: home, HOME: userHome, HABITAB_CLAUDE_CLI: claudeBin };
+const env = { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexHome, HABITAB_HOME: home, HOME: userHome, XDG_CONFIG_HOME: path.join(root, 'xdg'), HABITAB_CLAUDE_CLI: claudeBin };
 const run = (...args) => execFileSync(process.execPath, [cli, ...args], { env, encoding: 'utf8' });
 const launcher = path.join(home, 'bin', 'habitab');
+const browser = path.join(home, 'bin', 'habitab-browser');
+const cd4aFile = path.join(root, 'xdg', 'cd4a', 'config.json');
+// A launcher of Habitab 0.2 at another location: its entries are unwrapped too.
+const oldLauncher = '/Applications/Old/habitab';
 
 // --- Claude Code sandbox: user-scope entries (as `claude mcp add` writes them) + local + project cases.
 const userServers = {
   'chrome-devtools': { type: 'stdio', command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest'], env: {} },
+  // Wrapped by Habitab 0.2: the original command comes back.
+  'wrapped-devtools': { type: 'stdio', command: oldLauncher, args: ['mcp', '--', 'npx', '-y', 'chrome-devtools-mcp@latest', '--isolated'], env: { DEBUG: '1' } },
   // Connects to a browser of its own (here an Electron app): not Habitab's business.
   'electron-devtools': { type: 'stdio', command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest', '--browser-url=http://127.0.0.1:9229'], env: {} },
+  // The same, kept out of the global config: fine.
+  'electron-kept': { type: 'stdio', command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest', '--browser-url=http://127.0.0.1:9229'], env: { CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY: '1' } },
   'other-tool': { type: 'stdio', command: 'node', args: ['server.js'], env: {} },
 };
 const claudeJson = {
   numStartups: 1,
   mcpServers: userServers,
-  projects: { [proj]: { mcpServers: { 'cdp-local': { type: 'stdio', command: 'npx', args: ['chrome-devtools-mcp@latest', '--viewport', '1024x768'], env: { DEBUG: '1' } } } } },
+  projects: { [proj]: { mcpServers: { 'cdp-local': { type: 'stdio', command: oldLauncher, args: ['mcp', '--', 'npx', 'chrome-devtools-mcp@latest', '--viewport', '1024x768'], env: { DEBUG: '1' } } } } },
 };
 fs.writeFileSync(path.join(claudeDir, '.claude.json'), JSON.stringify(claudeJson, null, 2));
 fs.writeFileSync(path.join(proj, '.mcp.json'), JSON.stringify({ mcpServers: {
@@ -77,6 +87,11 @@ startup_timeout_sec = 30
 command = "/opt/homebrew/bin/chrome-devtools-mcp"
 enabled = true
 
+[mcp_servers.cdp-wrapped]
+command = "${oldLauncher}"
+args = ["mcp", "--", "npx", "chrome-devtools-mcp@latest"]   # Habitab 0.2
+startup_timeout_sec = 20
+
 [mcp_servers.cdp-external]
 command = "npx"
 args = ["chrome-devtools-mcp@latest", "-u", "http://127.0.0.1:9333"]
@@ -90,7 +105,7 @@ trust_level = "trusted"
 const proj2Trust = `\n[projects."${proj2}"]\ntrust_level = "trusted"\n`;
 fs.writeFileSync(path.join(codexHome, 'config.toml'), codexToml + proj2Trust);
 fs.writeFileSync(path.join(proj, '.codex', 'config.toml'), `[mcp_servers.proj-cdp]\ncommand = "npx"\nargs = ["chrome-devtools-mcp@latest", "--isolated"]\n`);
-const proj2Toml = `[mcp_servers.proj2-cdp]\ncommand = "npx"\nargs = ["chrome-devtools-mcp@latest"]\n`;
+const proj2Toml = `[mcp_servers.proj2-cdp]\ncommand = "${oldLauncher}"\nargs = ["mcp", "--", "npx", "chrome-devtools-mcp@latest"]\n`;
 fs.writeFileSync(path.join(proj2, '.codex', 'config.toml'), proj2Toml);
 
 // --- JSON clients: OpenCode (JSONC with comments), Cursor (user + project), Gemini CLI, Windsurf
@@ -109,10 +124,10 @@ const jsonFiles = {
   },
 }
 `],
-  cursor: [path.join(userHome, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { 'cursor-browser': { command: 'npx', args: ['chrome-devtools-mcp@latest'], env: { DEBUG: '1' } } } }, null, 2) + '\n'],
+  cursor: [path.join(userHome, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { 'cursor-browser': { command: oldLauncher, args: ['mcp', '--', 'npx', 'chrome-devtools-mcp@latest'], env: { DEBUG: '1' } } } }, null, 2) + '\n'],
   cursorProject: [path.join(proj, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { 'cursor-proj': { command: 'npx', args: ['-y', 'chrome-devtools-mcp'] } } }, null, 2) + '\n'],
   gemini: [path.join(userHome, '.gemini', 'settings.json'), JSON.stringify({ theme: 'GitHub', mcpServers: { 'gemini-browser': { command: '/usr/local/bin/chrome-devtools-mcp', timeout: 30000 } } }, null, 2) + '\n'],
-  windsurf: [path.join(userHome, '.codeium', 'windsurf', 'mcp_config.json'), '{\n\t"mcpServers": {\n\t\t"ws-browser": {\n\t\t\t"command": "npx",\n\t\t\t"args": ["chrome-devtools-mcp@latest"]\n\t\t},\n\t\t"ws-external": {\n\t\t\t"command": "npx",\n\t\t\t"args": ["chrome-devtools-mcp@latest", "--browser-url", "http://127.0.0.1:9222"]\n\t\t}\n\t}\n}\n'],
+  windsurf: [path.join(userHome, '.codeium', 'windsurf', 'mcp_config.json'), '{\n\t"mcpServers": {\n\t\t"ws-browser": {\n\t\t\t"command": "/Applications/Old/habitab",\n\t\t\t"args": ["mcp", "--", "npx", "chrome-devtools-mcp@latest"]\n\t\t},\n\t\t"ws-external": {\n\t\t\t"command": "npx",\n\t\t\t"args": ["chrome-devtools-mcp@latest", "--browser-url", "http://127.0.0.1:9222"]\n\t\t}\n\t}\n}\n'],
 };
 for (const [file, text] of Object.values(jsonFiles)) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); }
 const jsonText = k => fs.readFileSync(jsonFiles[k][0], 'utf8');
@@ -120,84 +135,63 @@ const jsonText = k => fs.readFileSync(jsonFiles[k][0], 'utf8');
 // --- 1. Preview
 const preview = run('setup');
 const status = name => (preview.match(new RegExp(`^\\[(\\w+)\\] [^\\n]*· ${name} ·`, 'm')) ?? [])[1];
-check(status('chrome-devtools') === 'migrate', 'Claude/Codex chrome-devtools entries proposed');
-check(status('electron-devtools') === 'external', 'external --browser-url entry left alone');
+check(/\[todo\] Habitab's browser is not configured/.test(preview), 'preview: the global config is not set yet');
+check(status('chrome-devtools') === 'ok', 'plain Claude/Codex entries are fine as they are');
+check(status('wrapped-devtools') === 'unwrap' && status('cdp-local') === 'unwrap', 'Claude entries wrapped by Habitab 0.2 are proposed for unwrapping');
+check(status('electron-devtools') === 'conflict' && preview.includes('CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY'), 'external --browser-url entry reported as conflict with the hint');
+check(status('electron-kept') === 'ok', 'an entry kept out of the global config by its env is fine');
 check(!preview.includes('other-tool'), 'non chrome-devtools servers are ignored');
-check(status('cdp-local') === 'migrate', 'Claude local scope entry proposed');
-check(status('team-browser') === 'migrate' && preview.includes('Project'), 'Claude .mcp.json entry proposed');
-check(status('profile-browser') === 'persistentProfile', '--user-data-dir entry not taken over');
-check(status('cdp-quoted') === 'migrate', 'Codex quoted table + multi-line array parsed');
-check(status('cdp-noargs') === 'migrate', 'Codex entry without args parsed');
-check(status('cdp-external') === 'external', 'Codex -u alias recognized as external');
+check(status('team-browser') === 'ok' && preview.includes('Project'), 'Claude .mcp.json entry found');
+check(status('profile-browser') === 'ok' && preview.includes('--userDataDir has no effect'), '--user-data-dir entry is fine, with a note');
+check(status('cdp-quoted') === 'conflict', 'Codex --channel entry reported as conflict');
+check(status('cdp-noargs') === 'ok', 'Codex entry without args parsed');
+check(status('cdp-wrapped') === 'unwrap', 'Codex wrapped entry proposed for unwrapping');
+check(status('cdp-external') === 'conflict', 'Codex -u alias recognized as conflict');
 check(status('cdp-inline') === 'unsupported', 'Codex inline table reported as unsupported');
-check(status('proj-cdp') === 'migrate', 'Codex trusted project file found');
-check(status('oc-browser') === 'migrate' && !preview.includes('remote-thing'), 'OpenCode JSONC entry proposed, remote server ignored');
-check(status('cursor-browser') === 'migrate' && status('cursor-proj') === 'migrate', 'Cursor user and project entries proposed');
-check(status('gemini-browser') === 'migrate', 'Gemini CLI entry without args proposed');
-check(status('ws-browser') === 'migrate' && status('ws-external') === 'external', 'Windsurf entry proposed, external one left alone');
-check(status('proj2-cdp') === 'migrate', 'second Codex trusted project file found');
+check(status('proj-cdp') === 'ok', 'Codex trusted project file found');
+check(status('oc-browser') === 'ok' && !preview.includes('remote-thing'), 'OpenCode JSONC entry found, remote server ignored');
+check(status('cursor-browser') === 'unwrap' && status('cursor-proj') === 'ok', 'Cursor wrapped user entry and plain project entry');
+check(status('gemini-browser') === 'ok', 'Gemini CLI entry without args found');
+check(status('ws-browser') === 'unwrap' && status('ws-external') === 'conflict', 'Windsurf wrapped entry and external one');
+check(status('proj2-cdp') === 'unwrap', 'second Codex trusted project file: wrapped entry found');
 
-// --- 2. Apply everything except the shared Codex project file of proj
-const ids = [...preview.matchAll(/^\s+id: (.+)$/gm)].map(m => m[1]).filter(id => !id.startsWith('codex|project') || id.includes(`|${proj2}|`));
+// --- 2. Apply: global config, plus unwrapping everything except the Codex project file of proj2
+const ids = [...preview.matchAll(/^\s+id: (.+)$/gm)].map(m => m[1]).filter(id => !id.includes(`|${proj2}|`));
 const applied = run('setup', '--apply', ...ids);
 check(!applied.includes('✗'), 'apply without errors', applied.split('\n').filter(l => l.includes('✗')).join(' | '));
+check(fs.existsSync(browser) && fs.existsSync(launcher), 'the habitab command and the browser script are installed');
+check(JSON.parse(fs.readFileSync(cd4aFile, 'utf8')).executablePath === browser, 'the global config names the browser script', fs.readFileSync(cd4aFile, 'utf8'));
 const cj = JSON.parse(fs.readFileSync(path.join(claudeDir, '.claude.json'), 'utf8'));
-const cdt = cj.mcpServers['chrome-devtools'];
-check(cdt && cdt.command === launcher && cdt.args[0] === 'mcp' && cdt.args[1] === '--', 'Claude user entry wrapped', JSON.stringify(cdt));
-check(JSON.stringify(cj.mcpServers['other-tool']) === JSON.stringify(userServers['other-tool']), 'unrelated Claude server unchanged');
+check(JSON.stringify(cj.mcpServers['chrome-devtools']) === JSON.stringify(userServers['chrome-devtools']), 'plain Claude entry unchanged');
+const uw = cj.mcpServers['wrapped-devtools'];
+check(uw && uw.command === 'npx' && uw.args.join(' ') === '-y chrome-devtools-mcp@latest --isolated' && uw.env.DEBUG === '1', 'Claude wrapped entry unwrapped, env kept', JSON.stringify(uw));
 const local = cj.projects[proj].mcpServers;
-check(local['cdp-local'].command === launcher && local['cdp-local'].env.DEBUG === '1', 'Claude local entry wrapped, env kept');
-check(local['team-browser']?.command === launcher, 'Claude project entry shadowed by local override');
+check(local['cdp-local'].command === 'npx' && local['cdp-local'].args.join(' ') === 'chrome-devtools-mcp@latest --viewport 1024x768' && local['cdp-local'].env.DEBUG === '1', 'Claude local entry unwrapped, env kept');
 check(fs.readFileSync(path.join(proj, '.mcp.json'), 'utf8') === mcpJsonBefore, 'shared .mcp.json unchanged');
 const toml = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
-check(toml.startsWith(baseToml.split('[mcp_servers.chrome-devtools]')[0]), 'Codex file before the entry byte-identical');
-check(toml.includes('[mcp_servers.chrome-devtools.tools.take_screenshot]\napproval_mode = "approve"'), 'Codex tool approvals kept');
-check(toml.includes('startup_timeout_sec = 30') && toml.includes('enabled = true'), 'Codex other keys kept');
-check(/\[mcp_servers\.cdp-noargs\]\ncommand = ".*habitab"\nargs = \["mcp", "--", "\/opt\/homebrew\/bin\/chrome-devtools-mcp"\]\nenabled = true/.test(toml), 'Codex args line inserted for entry without args');
+check(toml.startsWith(baseToml), 'Codex file before the wrapped entry byte-identical');
+check(toml.includes('[mcp_servers.cdp-wrapped]\ncommand = "npx"\nargs = ["chrome-devtools-mcp@latest"]   # Habitab 0.2\nstartup_timeout_sec = 20'), 'Codex wrapped entry unwrapped, comment and other keys kept', toml.match(/\[mcp_servers\.cdp-wrapped\][^[]*/)?.[0]);
 check(toml.includes('args = ["chrome-devtools-mcp@latest", "-u", "http://127.0.0.1:9333"]'), 'Codex external entry unchanged');
-const backups = fs.readdirSync(path.join(home, 'backups'));
-check(backups.length === 1 && fs.readdirSync(path.join(home, 'backups', backups[0])).length === 8, 'one backup per changed file', fs.readdirSync(path.join(home, 'backups', backups[0])).length);
+check(fs.readFileSync(path.join(proj2, '.codex', 'config.toml'), 'utf8') === proj2Toml, 'skipped Codex project file untouched');
 {
-  // Putting the old array back must give the original file: nothing else changed.
-  const oc = jsonText('opencode');
-  const ocCmd = oc.match(/"command": (\[[^\]]*\])/)?.[1];
-  check(JSON.parse(ocCmd ?? '[]')[0] === launcher && oc.replace(ocCmd, '["npx", "-y", "chrome-devtools-mcp@latest"]') === jsonFiles.opencode[1], 'OpenCode: only the command array changed, comments kept', ocCmd);
   const cu = JSON.parse(jsonText('cursor')).mcpServers['cursor-browser'];
-  check(cu.command === launcher && cu.args.join(' ') === 'mcp -- npx chrome-devtools-mcp@latest' && cu.env.DEBUG === '1', 'Cursor: wrapped, env kept', JSON.stringify(cu));
-  const ge = JSON.parse(jsonText('gemini'));
-  check(ge.theme === 'GitHub' && ge.mcpServers['gemini-browser'].timeout === 30000 && ge.mcpServers['gemini-browser'].args?.join(' ') === 'mcp -- /usr/local/bin/chrome-devtools-mcp', 'Gemini CLI: args inserted, other settings kept', JSON.stringify(ge));
+  check(cu.command === 'npx' && cu.args.join(' ') === 'chrome-devtools-mcp@latest' && cu.env.DEBUG === '1', 'Cursor: unwrapped, env kept', JSON.stringify(cu));
   const ws = jsonText('windsurf');
-  check(ws.includes('\t\t"ws-external"') && JSON.parse(ws).mcpServers['ws-browser'].command === launcher, 'Windsurf: wrapped, tab indentation kept');
+  check(ws.includes('\t\t"ws-external"') && JSON.parse(ws).mcpServers['ws-browser'].command === 'npx', 'Windsurf: unwrapped, tab indentation kept');
+  check(jsonText('opencode') === jsonFiles.opencode[1] && jsonText('gemini') === jsonFiles.gemini[1], 'OpenCode and Gemini CLI files untouched');
 }
-check(fs.existsSync(launcher), 'launcher copied to stable location');
 
 // --- 3. Idempotent
 const again = run('setup');
-const pendingAgain = again.split('\n').filter(l => /^\[(migrate|updatePath)\]/.test(l) && !l.includes('proj-cdp'));
-check(pendingAgain.length === 0, 'second run proposes nothing new (except skipped project file)', pendingAgain.join(' | '));
-{ const m = (again.match(/^\[migrated\]/gm) ?? []).length; const expected = (preview.match(/^\[migrate\]/gm) ?? []).length - 1; check(m === expected, 'all applied entries reported as migrated', `${m}/${expected}`); }
+check(/\[ok\] executablePath names Habitab's browser/.test(again), 'second run: the global config is set');
+const pendingAgain = again.split('\n').filter(l => /^\[unwrap\]/.test(l) && !l.includes('proj2-cdp'));
+check(pendingAgain.length === 0, 'second run proposes nothing new (except the skipped project file)', pendingAgain.join(' | '));
 
-// --- 4. User changes after apply, then uninstall
-execFileSync(claudeBin, ['mcp', 'remove', 'cdp-local', '-s', 'local'], { env, cwd: proj, encoding: 'utf8' });
-const changed = { ...local['cdp-local'], env: { DEBUG: '1', ADDED_LATER: 'yes' } };
-execFileSync(claudeBin, ['mcp', 'add-json', 'cdp-local', JSON.stringify(changed), '-s', 'local'], { env, cwd: proj, encoding: 'utf8' });
-let t2 = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
-t2 = t2.replace('startup_timeout_sec = 30', 'startup_timeout_sec = 45').replace(proj2Trust, '');
-fs.writeFileSync(path.join(codexHome, 'config.toml'), t2);
-
-check(/^\[migrated\][^\n]*· proj2-cdp ·/m.test(run('setup')), 'untrusted project file with Habitab entry still found via manifest');
-
+// --- 4. Uninstall: the global config loses the entry, the skipped project file is unwrapped too
 const un = run('uninstall');
 check(!un.includes('✗'), 'uninstall without errors', un.split('\n').filter(l => l.includes('✗')).join(' | '));
-const cj2 = JSON.parse(fs.readFileSync(path.join(claudeDir, '.claude.json'), 'utf8'));
-check(JSON.stringify(cj2.mcpServers['chrome-devtools']) === JSON.stringify(userServers['chrome-devtools']), 'Claude user entry restored exactly');
-const l2 = cj2.projects[proj].mcpServers;
-check(l2['cdp-local'].command === 'npx' && l2['cdp-local'].env.ADDED_LATER === 'yes', 'Claude entry changed later: unwrapped, user change kept');
-check(!l2['team-browser'], 'Claude local override removed, .mcp.json applies again');
-const t3 = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
-check(t3 === codexToml.replace('startup_timeout_sec = 30', 'startup_timeout_sec = 45'), 'Codex file byte-identical to original plus later user change');
-check(fs.readFileSync(path.join(proj, '.codex', 'config.toml'), 'utf8').includes('"--isolated"'), 'skipped Codex project file untouched');
-check(fs.readFileSync(path.join(proj2, '.codex', 'config.toml'), 'utf8') === proj2Toml, 'Codex file of no longer trusted project restored');
-for (const k of Object.keys(jsonFiles)) check(jsonText(k) === jsonFiles[k][1], `${k}: file byte-identical after uninstall`, jsonText(k).slice(0, 120));
+check(!fs.existsSync(cd4aFile), 'uninstall removes the global config entry (the file had nothing else)');
+check(fs.readFileSync(path.join(proj2, '.codex', 'config.toml'), 'utf8').includes('command = "npx"'), 'Codex project file unwrapped on uninstall');
+check(!/\[unwrap\]/.test(run('setup')), 'nothing left to unwrap');
 
 fs.rmSync(root, { recursive: true, force: true });

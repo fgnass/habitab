@@ -114,10 +114,8 @@ export function scanJsonClients(projects: string[]): Finding[] {
       if (!cmd) continue;
       const f = classify({ client: client.kind, scope, file, project, name, command: cmd[0], args: cmd[1] });
       if (!f) continue;
-      if (recorded && f.status !== 'migrated' && f.status !== 'updatePath') continue;
-      if (scope === 'project' && (f.status === 'migrate' || f.status === 'updatePath')) {
-        f.detail += ' Caution: project file, often shared in the repository. The launcher path is valid only on this computer.';
-      }
+      // Files known only from the manifest: only their wrapped entries matter.
+      if (recorded && f.status !== 'unwrap') continue;
       findings.push(f);
     }
   }
@@ -182,27 +180,6 @@ function change(file: string, c: JsonClient, name: string, raw: Record<string, s
   if (errors.length || parsed(written) !== parsed(raw)) throw new Error('Check after editing failed; file not written');
   writeAtomic(file, updated);
   return written;
-}
-
-export function applyJson(f: Finding, backup?: string): ManifestEntry {
-  if (!f.proposedCommand || !f.proposedArgs) throw new Error(`No proposal for ${f.name}`);
-  const c = clientOf(f.client);
-  const { text, root } = load(f.file);
-  const now = commandOf(c, root?.[c.key]?.[f.name]);
-  if (!now || now[0] !== f.command || JSON.stringify(now[1]) !== JSON.stringify(f.args)) throw new Error(`${f.file} changed since the check. Check again.`);
-  const wrapped = change(f.file, c, f.name, rawFor(c, f.proposedCommand, f.proposedArgs));
-  // A path update keeps the original recorded at the first installation.
-  const isUpdate = f.status === 'updatePath';
-  const prior = isUpdate ? manifest.latest(f.id) : undefined;
-  const inner = wrapper.unwrap(f.command, f.args);
-  return {
-    findingId: f.id, client: f.client, scope: f.scope, file: f.file, project: f.project, name: f.name, shadow: false,
-    originalCommand: isUpdate ? prior?.originalCommand ?? inner?.[0] ?? f.command : f.command,
-    originalArgs: isUpdate ? prior?.originalArgs ?? inner?.[1] ?? f.args : f.args,
-    // Source text of the values, for a byte-exact uninstall.
-    originalEntry: isUpdate ? prior?.originalEntry : rawValues(text, c, f.name),
-    wrappedEntry: wrapped, backup, appliedAt: new Date().toISOString(),
-  };
 }
 
 /**

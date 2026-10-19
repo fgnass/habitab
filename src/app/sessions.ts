@@ -1,4 +1,5 @@
-// Sessions: one per launcher (= MCP connection). Each session has its own
+// Sessions: one per chrome-devtools-mcp server (its browser bridge, see
+// launcher/browser.ts, signs it on). Each session has its own
 // partition (cookies, storage, cache), its tabs as embedded Chromium views,
 // an optional docked DevTools view and a CDP proxy. Partitions live in
 // memory, except for projects with a persistent profile (on disk).
@@ -13,6 +14,9 @@ import { log, paths } from '../shared/paths';
 import { isAlive } from '../shared/platform';
 import { prefs, setPrefs } from './prefs';
 import { SessionProxy } from './proxy';
+import { StepDetector } from './cdp-steps';
+import { codexThreadName } from '../shared/session-info';
+import { CodexAppServer, isBrowserTool, itemError, summarizeArgs } from './codex';
 
 /**
  * Pages see a Chrome, not a bare Chromium: the reduced user agent Chrome sends,
@@ -82,8 +86,12 @@ export interface Tab {
   targetUrl?: string;
   /** Console errors since the page loaded (newest last). */
   problems: Problem[];
+  /** The user last saw the console errors (DevTools of the tab open until then). */
+  problemsSeenAt?: number;
   /** Result of the user's find in page (the find bar shows "2/7"). */
   find?: { active: number; matches: number };
+  /** The user's own tab (see forkTab): input there does not hold the agent. Ends when the agent works in it. */
+  own?: boolean;
 }
 
 /**
@@ -202,7 +210,11 @@ export interface Session {
   id: string;
   meta: SessionMeta;
   launch: { proxyServer?: string; viewport?: string; acceptInsecureCerts?: boolean };
+  /** The bridge process, and the MCP server above it: the session lives while one of them does. */
   launcherPid?: number;
+  serverPid?: number;
+  /** Signed on by a launcher of Habitab 0.2 that still runs: its server needs a restart to use the bridge. */
+  legacy?: boolean;
   line?: LineSocket;
   ended: boolean;
   endedAt?: number;
@@ -212,6 +224,10 @@ export interface Session {
   tabs: Tab[];
   active?: Tab;
   proxy?: SessionProxy;
+  /** Steps from the CDP commands (cdp-steps.ts); not for Codex sessions with their thread in the daemon. */
+  steps?: StepDetector;
+  /** Codex bridge session with its thread in the app-server daemon: tool calls and feedback go through it. */
+  codexThread?: string;
   devtools?: WebContentsView;
   devtoolsTab?: Tab;
   currentTool?: Activity;
@@ -244,10 +260,6 @@ export interface Session {
   /** Audio of all tabs is silenced (like muting tabs in Chrome). */
   muted: boolean;
   lastInteraction?: number;
-  /** The agent waits in wait_for_user_feedback for the user to mark an area. */
-  feedback?: { requestId: string; question?: string; since: number };
-  /** Marked areas while no agent was waiting; the next wait_for_user_feedback gets them at once. */
-  feedbackQueue: { text: string; image?: string }[];
   protectedBy?: string;
   starting?: Promise<void>;
 }
@@ -258,6 +270,7 @@ interface SavedSession {
   meta: SessionMeta;
   launch: Session['launch'];
   launcherPid?: number;
+  serverPid?: number;
   ended: boolean;
   endedAt?: number;
   endReason?: string;
@@ -269,7 +282,7 @@ interface SavedSession {
   /** Steps with `tab` as the index into `tabs` (tab ids change with an app restart). */
   timeline?: Step[];
   uses?: number;
-  tabs: { url: string; active: boolean; usedAt?: number; fixedSize?: Tab['fixedSize']; emulation?: Omit<Emulation, 'by' | 'scale' | 'applied'> }[];
+  tabs: { url: string; active: boolean; usedAt?: number; fixedSize?: Tab['fixedSize']; emulation?: Omit<Emulation, 'by' | 'scale' | 'applied'>; own?: boolean }[];
   /** Only for in-memory partitions; a persistent profile has its cookies on disk. */
   cookies?: Electron.Cookie[];
 }
@@ -284,6 +297,15 @@ const ACTIVE_USES = 25;
  * Shown as a card in the sidebar: the session's front tab, and every tab that
  * the agent or the user used recently. Blank pages are never active.
  */
+/**
+ * Console errors the user has not seen: none while the tab's DevTools are open
+ * (they show their own count), else the ones that came or came again since.
+ */
+export function newProblems(s: Session, t: Tab): number {
+  if (s.devtools && s.devtoolsTab === t) return 0;
+  return t.problems.filter(p => p.at > (t.problemsSeenAt ?? 0)).length;
+}
+
 export function isActiveTab(s: Session, t: Tab): boolean {
   if (t === s.active) return true;
   const url = t.view.webContents.isDestroyed() ? '' : t.view.webContents.getURL();
@@ -293,10 +315,14 @@ export function isActiveTab(s: Session, t: Tab): boolean {
 const PROTECTING_TOOLS: Record<string, string | null> = {
   performance_start_trace: 'Performance trace running', performance_stop_trace: null,
   screencast_start: 'Screencast running', screencast_stop: null,
+  // Steps of browser bridge sessions (cdp-steps.ts).
+  'Trace': 'Performance trace running', 'Trace end': null,
+  'Screencast': 'Screencast running', 'Screencast end': null,
 };
 
 export class SessionManager {
   readonly sessions = new Map<string, Session>();
+  readonly codex = new CodexAppServer(process.env.npm_package_version ?? '0');
   selected?: string;
   onChange: () => void = () => {};
   onLayout: () => void = () => {};
@@ -315,7 +341,7 @@ export class SessionManager {
 
   constructor(private win: BaseWindow, private upstreamUrl: () => string) {}
 
-  // MARK: Launcher connections
+  // MARK: Browser bridge connections
 
   listen(): void {
     const sock = paths.socket;
@@ -347,14 +373,18 @@ export class SessionManager {
     if (!isSessionId(m.sessionId)) { line.close(); return undefined; }
     let s = this.sessions.get(m.sessionId);
     if (!s) {
-      s = { id: m.sessionId, meta: m.meta, launch: m.launch ?? {}, partition: `hb-${m.sessionId}`, tabs: [], activity: [], timeline: [], uses: 0, held: false, pinned: false, muted: false, ended: false, feedbackQueue: [] };
+      s = { id: m.sessionId, meta: m.meta, launch: m.launch ?? {}, partition: `hb-${m.sessionId}`, tabs: [], activity: [], timeline: [], uses: 0, held: false, pinned: false, muted: false, ended: false };
       this.sessions.set(s.id, s);
     }
     s.meta = m.meta;
     s.launcherPid = m.launcherPid;
+    s.serverPid = m.serverPid;
+    s.legacy = !m.serverPid;
+    if (s.legacy) log(`session ${s.id}: signed on by a 0.2 launcher (pid ${m.launcherPid}); its server needs a restart`);
     s.line = line;
     s.ended = false;
-    // A reconnecting launcher keeps holding while the user has control.
+    if (s.meta.client === 'codex' && !s.codexThread) void this.attachCodex(s);
+    // A reconnecting bridge keeps holding while the user has control.
     if (s.held) line.send({ type: 'hold', hold: true });
     this.onChange();
     return s;
@@ -370,34 +400,8 @@ export class SessionManager {
           .then(() => line.send({ type: 'endpoint', requestId: m.requestId, port: s.proxy!.port }))
           .catch(e => line.send({ type: 'endpoint', requestId: m.requestId, error: String(e?.message ?? e) }));
         break;
-      case 'toolStart':
-        s.currentTool = { tool: m.tool, summary: m.summary, start: Date.now() };
-        s.lastActivity = Date.now();
-        s.uses++;
-        this.throttle(s, false);
-        if (m.tool in PROTECTING_TOOLS && PROTECTING_TOOLS[m.tool]) s.protectedBy = PROTECTING_TOOLS[m.tool]!;
-        if (m.tool in PROTECTING_TOOLS && PROTECTING_TOOLS[m.tool] === null) s.protectedBy = undefined;
-        break;
-      case 'toolEnd': {
-        this.thumbSoon(s);
-        if (s.agentTab && s.agentTab !== s.active) this.thumbSoon(s, 800, s.agentTab);
-        const a: Activity = { ...(s.currentTool ?? { tool: m.tool, start: Date.now() }), durationMs: m.durationMs, isError: m.isError, detail: m.detail };
-        s.activity.unshift(a);
-        s.activity.length = Math.min(s.activity.length, 100);
-        this.recordStep(s, a);
-        s.currentTool = undefined;
-        s.lastActivity = Date.now();
-        break;
-      }
-      case 'feedbackRequest':
-        s.feedback = { requestId: m.requestId, question: m.question, since: Date.now() };
-        if (s.feedbackQueue.length) this.sendFeedback(s, s.feedbackQueue.splice(0));
-        break;
-      case 'feedbackCancel':
-        if (s.feedback?.requestId === m.requestId) s.feedback = undefined;
-        break;
       case 'hold':
-        // The launcher released by itself (time limit).
+        // The bridge released by itself (time limit).
         if (!m.hold && s.held) this.setHold(s, false);
         break;
       case 'bye':
@@ -408,18 +412,70 @@ export class SessionManager {
     this.onChange();
   }
 
+  /**
+   * Codex bridge session: finds its thread in the app-server daemon (by the
+   * working directory), then its tool calls replace the steps from CDP and
+   * feedback goes to the thread as a user message.
+   */
+  private async attachCodex(s: Session): Promise<void> {
+    const thread = await this.codex.resolveThread(s.meta.cwd ?? '');
+    if (!thread) { log(`session ${s.id}: no Codex thread for ${s.meta.cwd} in the app-server daemon`); return; }
+    if (s.ended || s.codexThread) return;
+    s.codexThread = thread.id;
+    s.meta.agentSessionId = thread.id;
+    s.meta.agentSessionSource = 'codex-app-server';
+    s.meta.agentSessionName = thread.name ?? codexThreadName(thread.id);
+    s.meta.codexAppServer = true;
+    s.steps?.close();
+    s.steps = undefined;
+    log(`session ${s.id}: Codex thread ${thread.id} (${thread.status ?? '?'})`);
+    this.onChange();
+    await this.codex.subscribe(thread.id, {
+      itemStarted: item => { if (isBrowserTool(item)) this.toolStart(s, item.tool!, summarizeArgs(item.arguments)); },
+      itemCompleted: item => { if (isBrowserTool(item)) this.toolEnd(s, item.tool!, !!itemError(item), item.durationMs ?? 0, itemError(item)); },
+    });
+  }
+
+  /** A step (cdp-steps.ts) or a tool call reported by Codex's daemon (codex.ts) begins. */
+  toolStart(s: Session, tool: string, summary?: string): void {
+    s.currentTool = { tool, summary, start: Date.now() };
+    s.lastActivity = Date.now();
+    s.uses++;
+    this.throttle(s, false);
+    if (tool in PROTECTING_TOOLS && PROTECTING_TOOLS[tool]) s.protectedBy = PROTECTING_TOOLS[tool]!;
+    if (tool in PROTECTING_TOOLS && PROTECTING_TOOLS[tool] === null) s.protectedBy = undefined;
+    this.onChange();
+  }
+
+  toolEnd(s: Session, tool: string, isError: boolean, durationMs: number, detail?: string, summary?: string): void {
+    this.thumbSoon(s);
+    if (s.agentTab && s.agentTab !== s.active) this.thumbSoon(s, 800, s.agentTab);
+    const a: Activity = { ...(s.currentTool ?? { tool, start: Date.now() }), tool, durationMs, isError, detail };
+    if (summary) a.summary = summary;
+    s.activity.unshift(a);
+    s.activity.length = Math.min(s.activity.length, 100);
+    this.recordStep(s, a);
+    s.currentTool = undefined;
+    s.lastActivity = Date.now();
+    this.onChange();
+  }
+
   private connectionLost(s: Session): void {
     s.line = undefined;
-    s.feedback = undefined;
     s.currentTool = undefined;
     if (s.ended) return;
-    if (s.launcherPid && isAlive(s.launcherPid)) {
-      // The launcher still runs and reconnects by itself.
+    if (this.agentAlive(s)) {
+      // The bridge still runs and reconnects by itself, or its server starts a new one with the next call.
       this.onChange();
       return;
     }
-    s.endReason = 'Launcher exited without signing off';
+    s.endReason = 'Browser bridge exited without signing off';
     this.end(s);
+  }
+
+  /** The bridge or the MCP server above it still runs. */
+  private agentAlive(s: { launcherPid?: number; serverPid?: number }): boolean {
+    return (!!s.launcherPid && isAlive(s.launcherPid)) || (!!s.serverPid && isAlive(s.serverPid));
   }
 
   /**
@@ -428,10 +484,10 @@ export class SessionManager {
    * close and the in-memory partition is cleared.
    */
   private end(s: Session): void {
+    if (s.codexThread) void this.codex.unsubscribe(s.codexThread);
     s.ended = true;
     s.endedAt = Date.now();
     s.line = undefined;
-    s.feedback = undefined;
     this.setHold(s, false);
     s.currentTool = undefined;
     const recent = !!s.lastInteraction && Date.now() - s.lastInteraction < 5 * 60_000;
@@ -456,10 +512,18 @@ export class SessionManager {
       if (shared && taken) await copyCookies(electronSession.fromPartition(shared), ses);
       this.configureSession(ses, s);
       await this.createTab(s, 'about:blank', false);
+      s.steps?.close();
+      s.steps = !s.codexThread ? new StepDetector({
+        start: st => { log(`session ${s.id} step: ${st.tool}`); this.toolStart(s, st.tool, st.summary); },
+        end: en => { log(`session ${s.id} step end: ${en.tool} ${en.durationMs} ms${en.isError ? ' error' : ''}`); this.toolEnd(s, en.tool, en.isError, en.durationMs, en.detail, en.summary); },
+      }) : undefined;
       s.proxy = new SessionProxy({
         sessionId: s.id,
         browserContextId: s.ctx!,
         upstreamUrl: this.upstreamUrl,
+        agentCommand: (key, method, params, sessionId) => s.steps?.command(key, method, params, sessionId),
+        agentReply: (key, error) => s.steps?.reply(key, error),
+        agentEvent: method => s.steps?.event(method),
         createTab: async url => (await this.createTab(s, url, true)).targetId,
         closeTab: async targetId => {
           const t = s.tabs.find(x => x.targetId === targetId);
@@ -486,8 +550,9 @@ export class SessionManager {
         agentUse: targetId => {
           const t = s.tabs.find(x => x.targetId === targetId);
           if (!t) return;
-          const changed = s.agentTab !== t || !isActiveTab(s, t);
+          const changed = s.agentTab !== t || !isActiveTab(s, t) || !!t.own;
           s.agentTab = t;
+          t.own = false;
           this.used(s, t, changed);
         },
         debuggerBack: targetId => {
@@ -578,7 +643,7 @@ export class SessionManager {
         action: 'allow',
         createWindow: (options: any) => {
           const pending = this.createTab(s, target, disposition !== 'background-tab', options.webContents);
-          void pending.then(() => this.onChange());
+          void pending.then(t => { t.own = tab.own; this.onChange(); });
           return options.webContents;
         },
       } as any;
@@ -698,8 +763,7 @@ export class SessionManager {
 
   /**
    * Sends problems of a tab to the agent (all, or the ones with the given ids),
-   * like a marked area: to a waiting wait_for_user_feedback call, else kept for
-   * the next one. The note that wakes the agent has no page text.
+   * like a marked area: as a note through the session's channel.
    */
   sendProblems(s: Session, tab: Tab, ids?: number[]): ReturnType<SessionManager['submitFeedback']> | undefined {
     const items = tab.problems.filter(p => !ids || ids.includes(p.id));
@@ -794,6 +858,7 @@ export class SessionManager {
     tab.view.webContents.setDevToolsWebContents(s.devtools.webContents);
     tab.view.webContents.openDevTools({ mode: 'detach', activate: false });
     s.devtoolsTab = tab;
+    tab.problemsSeenAt = Date.now();
     this.onLayout();
     this.onChange();
   }
@@ -811,7 +876,7 @@ export class SessionManager {
       try {
         const { text } = JSON.parse(e.message.slice(DEVTOOLS_SEND.length + 1));
         const how = s.devtoolsTab && this.sendDevtoolsSelection(s, s.devtoolsTab, String(text ?? ''));
-        if (how) this.onNotice(how === 'sent' ? 'Sent to the waiting agent' : how === 'pushed' ? 'Sent to the agent' : 'Kept for the agent’s next feedback call');
+        if (how) this.onNotice(how === 'pushed' ? 'Sent to the agent' : 'Not sent: this agent has no channel for feedback');
       } catch {}
     });
     dt.on('did-finish-load', () => void this.inDevtools(dt, DEVTOOLS_HOOK));
@@ -837,6 +902,7 @@ export class SessionManager {
     try { s.devtoolsTab?.view.webContents.closeDevTools(); } catch {}
     try { this.win.contentView.removeChildView(s.devtools); } catch {}
     try { s.devtools.webContents.close(); } catch {}
+    if (s.devtoolsTab) s.devtoolsTab.problemsSeenAt = Date.now();
     s.devtools = undefined;
     s.devtoolsTab = undefined;
     this.onLayout();
@@ -860,33 +926,32 @@ export class SessionManager {
   }
 
   /**
-   * The user marked an area. A waiting wait_for_user_feedback call gets it at
-   * once. Otherwise it is kept for the next call, and the agent gets a short
-   * note that asks for that call (Claude Code: channel or inbox socket; Codex:
-   * `codex queue`). The note has only the user's own words and the URL: page text
-   * stays in the tool result.
+   * The user marked an area (or sends console errors): the agent gets it as a
+   * note with all details, the image as a file. Codex gets it through the
+   * app-server daemon (the image as such), Claude Code through the inbox
+   * socket. Without a channel (other clients) it is kept for the clipboard.
    */
-  submitFeedback(s: Session, f: { text: string; image?: string; comment?: string; url: string; what?: string }): 'sent' | 'pushed' | 'kept' {
-    if (s.feedback && s.line) {
-      this.sendFeedback(s, [f]);
-      return 'sent';
+  submitFeedback(s: Session, f: { text: string; image?: string; comment?: string; url: string; what?: string }): 'pushed' | 'kept' {
+    const target = s.codexThread ? 'codex' : s.line && canPush(s.meta) ? 'inbox' : undefined;
+    if (!target) return 'kept';
+    let file: string | undefined;
+    if (f.image) {
+      try {
+        const dir = this.timelineDir(s);
+        fs.mkdirSync(dir, { recursive: true });
+        file = path.join(dir, `feedback-${Date.now()}.png`);
+        fs.writeFileSync(file, Buffer.from(f.image, 'base64'));
+      } catch (e: any) { log(`feedback image not written: ${e.message}`); }
     }
-    s.feedbackQueue.push(f);
-    this.onChange();
-    if (!s.line || !canPush(s.meta)) return 'kept';
-    s.line.send({ type: 'feedbackPush', content:
-      `The user ${f.what ?? 'marked an area of'} ${f.url} in Habitab${f.comment ? ` and says: ${f.comment}` : f.what ? '' : ' without a comment'}\n` +
-      `Call wait_for_user_feedback now: it returns at once with ${!f.image ? 'the details' : f.what ? 'the marked part of that screenshot' : 'a screenshot of the area and the HTML elements in it'}.` });
+    const content = [
+      'Feedback from the user in Habitab:',
+      f.text,
+      file && target === 'inbox' ? `Screenshot of the marked ${f.what ? 'part' : 'area'}: ${file} (look at it with your file reading tool).` : '',
+      'Act on it and report in your session as usual; the user sends more feedback on their own.',
+    ].filter(Boolean).join('\n');
+    if (target === 'codex') void this.codex.push(s.codexThread!, content, file);
+    else s.line!.send({ type: 'feedbackPush', content });
     return 'pushed';
-  }
-
-  private sendFeedback(s: Session, items: { text: string; image?: string }[]): void {
-    if (!s.feedback || !s.line) return;
-    const text = items.length === 1 ? items[0].text
-      : items.map((x, i) => `Feedback ${i + 1} of ${items.length}:\n${x.text}`).join('\n\n');
-    s.line.send({ type: 'feedbackResult', requestId: s.feedback.requestId, text, images: items.flatMap(x => (x.image ? [x.image] : [])) });
-    s.feedback = undefined;
-    this.onChange();
   }
 
   /** Silences or unmutes the audio of all tabs of the session, also the ones opened later. */
@@ -983,7 +1048,8 @@ export class SessionManager {
 
   /**
    * Writes the sessions that survive an app restart: connected ones (their
-   * launchers reconnect) and pinned ones, with their tabs and cookies.
+   * bridges come back with the next tool call) and pinned ones, with their
+   * tabs and cookies.
    */
   async save(): Promise<void> {
     clearTimeout(this.saveTimer);
@@ -995,14 +1061,14 @@ export class SessionManager {
       const tabs = live.map(t => {
         const e = t.emulation?.by === 'user' ? t.emulation : undefined;
         return {
-          url: t.view.webContents.getURL(), active: t === s.active, usedAt: t.usedAt, fixedSize: t.fixedSize,
+          url: t.view.webContents.getURL(), active: t === s.active, usedAt: t.usedAt, fixedSize: t.fixedSize, own: t.own,
           emulation: e && { width: e.width, height: e.height, dpr: e.dpr, mobile: e.mobile, zoom: e.zoom, preset: e.preset, fillWidth: e.fillWidth, fillHeight: e.fillHeight },
         };
       });
       let cookies: Electron.Cookie[] | undefined;
       if (s.ctx && !s.partition.startsWith('persist:')) try { cookies = await electronSession.fromPartition(s.partition).cookies.get({}); } catch {}
       sessions.push({
-        id: s.id, meta: s.meta, launch: s.launch, launcherPid: s.launcherPid, ended: s.ended, endedAt: s.endedAt, endReason: s.endReason,
+        id: s.id, meta: s.meta, launch: s.launch, launcherPid: s.launcherPid, serverPid: s.serverPid, ended: s.ended, endedAt: s.endedAt, endReason: s.endReason,
         pinned: s.pinned, muted: s.muted, lastActivity: s.lastActivity, lastInteraction: s.lastInteraction, activity: s.activity.slice(0, 30), uses: s.uses, tabs, cookies,
         timeline: s.timeline.map(x => ({ ...x, tab: live.findIndex(t => t.id === x.tab) })).filter(x => x.tab >= 0),
       });
@@ -1015,20 +1081,20 @@ export class SessionManager {
   }
 
   /**
-   * Restores the saved sessions at app start, before launchers can connect.
-   * A session whose launcher still runs waits for it to reconnect; a pinned
-   * one whose launcher exited comes back as kept. Others are gone.
+   * Restores the saved sessions at app start, before bridges can connect.
+   * A session whose bridge still runs waits for it to reconnect; a pinned
+   * one whose bridge exited comes back as kept. Others are gone.
    */
   async restore(): Promise<void> {
     let saved: { selected?: string; sessions?: SavedSession[] };
     try { saved = JSON.parse(fs.readFileSync(paths.sessions, 'utf8')); } catch { this.cleanTimelines(); return; }
     for (const x of saved.sessions ?? []) {
       if (!isSessionId(x.id) || this.sessions.has(x.id)) continue;
-      const alive = !x.ended && !!x.launcherPid && isAlive(x.launcherPid);
+      const alive = !x.ended && this.agentAlive(x);
       if (!alive && !x.pinned) continue;
       const s: Session = {
-        id: x.id, meta: x.meta ?? {}, launch: x.launch ?? {}, launcherPid: x.launcherPid, partition: `hb-${x.id}`, tabs: [],
-        activity: x.activity ?? [], timeline: (x.timeline ?? []).map(t => ({ ...t, url: t.url ?? '' })), uses: x.uses ?? 0, held: false, pinned: !!x.pinned, muted: !!x.muted, feedbackQueue: [],
+        id: x.id, meta: x.meta ?? {}, launch: x.launch ?? {}, launcherPid: x.launcherPid, serverPid: x.serverPid, partition: `hb-${x.id}`, tabs: [],
+        activity: x.activity ?? [], timeline: (x.timeline ?? []).map(t => ({ ...t, url: t.url ?? '' })), uses: x.uses ?? 0, held: false, pinned: !!x.pinned, muted: !!x.muted,
         lastActivity: x.lastActivity, lastInteraction: x.lastInteraction,
         ended: !alive, endedAt: alive ? undefined : x.endedAt ?? Date.now(), endReason: alive ? undefined : x.endReason ?? 'Launcher exited during the app restart',
       };
@@ -1059,6 +1125,7 @@ export class SessionManager {
       if (i === 0) tab.view.webContents.loadURL(t.url).catch(() => {});
       if (t.usedAt !== undefined) tab.usedAt = t.usedAt;
       if (t.fixedSize) tab.fixedSize = t.fixedSize;
+      if (t.own) tab.own = true;
       if (t.emulation) this.emulate(tab, t.emulation);
       if (t.active) s.active = tab;
     }
@@ -1288,7 +1355,8 @@ export class SessionManager {
     this.used(s, tab);
     if (this.pausesDebugger(s)) void this.pauseDebugger(s, tab, true);
     if (pointer) this.pointerSinceFocus = true;
-    this.userInput(s, start);
+    if (tab.own) this.interaction(s);
+    else this.userInput(s, start);
   }
 
   /** The user acts in a session: control goes to the user until a pause. */
@@ -1306,6 +1374,24 @@ export class SessionManager {
   releaseAutoHolds(): void {
     this.pointerSinceFocus = false;
     for (const s of this.sessions.values()) if (s.held && s.autoResumeAt) this.setHold(s, false);
+  }
+
+  /**
+   * Button and menu: the page of the front tab opens again in a new tab of the
+   * same session (same cookies and storage), only for the user. The agent goes
+   * on in its tab at once, and the user's input in the new tab does not hold it.
+   * Only the URL goes over, not the state inside the page.
+   */
+  async forkTab(s: Session): Promise<void> {
+    const from = s.active;
+    if (!from || from.own || s.ended) return;
+    const url = from.view.webContents.getURL();
+    const tab = await this.createTab(s, url || 'about:blank', true);
+    tab.own = true;
+    if (from.emulation?.by === 'user') this.emulate(tab, from.emulation);
+    this.used(s, tab);
+    if (s.held) this.setHold(s, false);
+    this.onChange();
   }
 
   /** Button and menu: take control, keep automatic control, or resume. */
@@ -1327,8 +1413,8 @@ export class SessionManager {
   idleCheck(): void {
     for (const s of this.sessions.values()) {
       // A restored session whose launcher exited before it could reconnect.
-      if (!s.ended && !s.line && s.launcherPid && !isAlive(s.launcherPid)) {
-        s.endReason = 'Launcher exited without signing off';
+      if (!s.ended && !s.line && !this.agentAlive(s)) {
+        s.endReason = 'Browser bridge exited without signing off';
         this.end(s);
       }
       const visible = s.id === this.selected;
@@ -1385,7 +1471,7 @@ export class SessionManager {
     const wc = tab.view.webContents;
     const items: MenuItemConstructorOptions[] = [];
     if (p.linkURL) {
-      items.push({ label: 'Open Link in New Tab', click: () => void this.createTab(s, p.linkURL, true) });
+      items.push({ label: 'Open Link in New Tab', click: () => void this.createTab(s, p.linkURL, true).then(t => { t.own = tab.own; this.onChange(); }) });
       items.push({ label: 'Copy Link', click: () => clipboard.writeText(p.linkURL) });
       items.push({ label: 'Open Link in Default Browser', click: () => void shell.openExternal(p.linkURL) });
       items.push({ type: 'separator' });

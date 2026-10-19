@@ -1,7 +1,9 @@
-// Preload of the session pages (sandboxed, isolated world). Electron lacks the
-// Web Share API (Chromium has it in //chrome), so pages get navigator.share()
-// and navigator.canShare() here, before their own scripts run; a share opens
-// the macOS share menu (see the 'habitab:share' handler in main.ts).
+// Preload of the session pages (sandboxed, isolated world). Pages get what
+// Electron lacks compared to Chrome, before their own scripts run:
+//   - the Web Share API (Chromium has it in //chrome): a share opens the macOS
+//     share menu (see the 'habitab:share' handler in main.ts);
+//   - the Web Speech API (Chrome's engine sends audio to Google; Electron's
+//     start() fails with "network"): recognition on this Mac, see speech.ts.
 // Nothing else is exposed to the page.
 import { contextBridge, ipcRenderer } from 'electron';
 
@@ -60,6 +62,191 @@ function installShare(send: (json: string) => Promise<string>): void {
   }
 }
 
+/**
+ * Runs in the page's main world: SpeechRecognition (and webkitSpeechRecognition)
+ * like Chrome's, with the events, result lists and error names of the spec.
+ * Requests go to the app as JSON ({ op, id, … }); events come back as JSON
+ * ({ id, type, … }, see SpeechEvent in speech.ts).
+ */
+function installSpeech(request: (json: string) => Promise<string>, subscribe: (cb: (json: string) => void) => void): void {
+  /** Chrome gives up after this time without any speech. */
+  const NO_SPEECH_MS = 8000;
+  type Handler = ((ev: Event) => void) | null;
+
+  class SpeechRecognitionAlternative {
+    constructor(readonly transcript: string, readonly confidence: number) {}
+  }
+  class SpeechRecognitionResult {
+    readonly length: number;
+    [index: number]: SpeechRecognitionAlternative;
+    constructor(alternatives: SpeechRecognitionAlternative[], readonly isFinal: boolean) {
+      alternatives.forEach((a, i) => Object.defineProperty(this, i, { value: a, enumerable: true }));
+      this.length = alternatives.length;
+    }
+    item(i: number): SpeechRecognitionAlternative | null { return this[i] ?? null; }
+    *[Symbol.iterator](): Iterator<SpeechRecognitionAlternative> { for (let i = 0; i < this.length; i++) yield this[i]; }
+  }
+  class SpeechRecognitionResultList {
+    readonly length: number;
+    [index: number]: SpeechRecognitionResult;
+    constructor(results: SpeechRecognitionResult[]) {
+      results.forEach((r, i) => Object.defineProperty(this, i, { value: r, enumerable: true }));
+      this.length = results.length;
+    }
+    item(i: number): SpeechRecognitionResult | null { return this[i] ?? null; }
+    *[Symbol.iterator](): Iterator<SpeechRecognitionResult> { for (let i = 0; i < this.length; i++) yield this[i]; }
+  }
+  class SpeechRecognitionEvent extends Event {
+    readonly resultIndex: number;
+    readonly results: SpeechRecognitionResultList;
+    constructor(type: string, init?: { resultIndex?: number; results?: SpeechRecognitionResultList }) {
+      super(type);
+      this.resultIndex = init?.resultIndex ?? 0;
+      this.results = init?.results ?? new SpeechRecognitionResultList([]);
+    }
+  }
+  class SpeechRecognitionErrorEvent extends Event {
+    readonly error: string;
+    readonly message: string;
+    constructor(type: string, init: { error: string; message?: string }) {
+      super(type);
+      this.error = init.error;
+      this.message = init.message ?? '';
+    }
+  }
+
+  const EVENTS = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend', 'result', 'nomatch', 'error', 'start', 'end'];
+  let nextId = 1;
+  const running = new Map<number, SpeechRecognition>();
+
+  class SpeechRecognition extends EventTarget {
+    grammars: unknown = null;
+    lang = '';
+    continuous = false;
+    interimResults = false;
+    maxAlternatives = 1;
+    processLocally = false;
+    #id = 0;
+    #handlers = new Map<string, Handler>();
+    #finals: string[] = [];
+    #interim: string | null = null;
+    #audio = false;
+    #speech = false;
+    #stopping = false;
+    #timer: ReturnType<typeof setTimeout> | undefined;
+
+    /** On-device recognition for these languages: "available", "downloadable", "downloading" or "unavailable". */
+    static async available(options?: { langs?: string[]; processLocally?: boolean }): Promise<string> {
+      const langs = options?.langs?.length ? options.langs : [''];
+      const statuses = await Promise.all(langs.map(l => request(JSON.stringify({ op: 'available', lang: String(l) }))));
+      for (const s of ['unavailable', 'downloading', 'downloadable']) if (statuses.includes(s)) return s;
+      return 'available';
+    }
+    static async install(options?: { langs?: string[]; processLocally?: boolean }): Promise<boolean> {
+      const langs = options?.langs?.length ? options.langs : [''];
+      const ok = await Promise.all(langs.map(l => request(JSON.stringify({ op: 'install', lang: String(l) }))));
+      return ok.every(x => x === 'true');
+    }
+
+    start(): void {
+      if (this.#id) throw new DOMException("Failed to execute 'start' on 'SpeechRecognition': recognition has already started.", 'InvalidStateError');
+      this.#id = nextId++;
+      this.#finals = [];
+      this.#interim = null;
+      this.#audio = this.#speech = this.#stopping = false;
+      running.set(this.#id, this);
+      const lang = this.lang || document.documentElement.lang || navigator.language;
+      void request(JSON.stringify({ op: 'start', id: this.#id, lang, interim: this.interimResults, continuous: this.continuous }));
+      queueMicrotask(() => { if (this.#id) this.dispatchEvent(new Event('start')); });
+    }
+    stop(): void {
+      if (!this.#id || this.#stopping) return;
+      this.#stopping = true;
+      void request(JSON.stringify({ op: 'stop', id: this.#id }));
+    }
+    abort(): void {
+      if (!this.#id || this.#stopping) return;
+      this.#stopping = true;
+      void request(JSON.stringify({ op: 'abort', id: this.#id }));
+      this.dispatchEvent(new SpeechRecognitionErrorEvent('error', { error: 'aborted' }));
+    }
+
+    /** An event of the app for this recognition. */
+    _receive(e: { type: string; text?: string; final?: boolean; confidence?: number; error?: string; message?: string }): void {
+      if (!this.#id) return;
+      if (e.type === 'started') {
+        this.#audio = true;
+        this.dispatchEvent(new Event('audiostart'));
+        this.#timer = setTimeout(() => this.#noSpeech(), NO_SPEECH_MS);
+      } else if (e.type === 'result') {
+        clearTimeout(this.#timer);
+        if (!this.#speech) {
+          this.#speech = true;
+          this.dispatchEvent(new Event('soundstart'));
+          this.dispatchEvent(new Event('speechstart'));
+        }
+        const text = (e.text ?? '').trim();
+        if (e.final) { this.#interim = null; if (text) this.#finals.push(text); }
+        else this.#interim = text;
+        const items = this.#finals.map(t => new SpeechRecognitionResult([new SpeechRecognitionAlternative(t, e.final ? e.confidence ?? 1 : 1)], true));
+        if (this.#interim !== null && this.interimResults) items.push(new SpeechRecognitionResult([new SpeechRecognitionAlternative(this.#interim, 1)], false));
+        if (!e.final && !this.interimResults) return;
+        if (!e.final && !this.#interim) return;
+        const resultIndex = e.final ? Math.max(0, this.#finals.length - 1) : this.#finals.length;
+        if (e.final && !text) return;
+        this.dispatchEvent(new SpeechRecognitionEvent('result', { resultIndex, results: new SpeechRecognitionResultList(items) }));
+        if (e.final && !this.continuous) this.stop();
+      } else if (e.type === 'error') {
+        clearTimeout(this.#timer);
+        this.dispatchEvent(new SpeechRecognitionErrorEvent('error', { error: e.error ?? 'network', message: e.message }));
+      } else if (e.type === 'end') {
+        clearTimeout(this.#timer);
+        running.delete(this.#id);
+        this.#id = 0;
+        if (this.#speech) { this.dispatchEvent(new Event('speechend')); this.dispatchEvent(new Event('soundend')); }
+        if (this.#audio) this.dispatchEvent(new Event('audioend'));
+        if (!this.#finals.length && this.#audio && this.#speech) this.dispatchEvent(new SpeechRecognitionEvent('nomatch'));
+        this.dispatchEvent(new Event('end'));
+      }
+    }
+    #noSpeech(): void {
+      if (!this.#id || this.#speech || this.#stopping) return;
+      this.dispatchEvent(new SpeechRecognitionErrorEvent('error', { error: 'no-speech' }));
+      this.#stopping = true;
+      void request(JSON.stringify({ op: 'abort', id: this.#id }));
+    }
+    /** on<event> attributes, as listeners (so the order with addEventListener is kept). */
+    _handler(type: string): Handler { return this.#handlers.get(type) ?? null; }
+    _setHandler(type: string, h: Handler): void {
+      const old = this.#handlers.get(type);
+      if (old) this.removeEventListener(type, old);
+      this.#handlers.set(type, typeof h === 'function' ? h : null);
+      if (typeof h === 'function') this.addEventListener(type, h);
+    }
+  }
+  for (const type of EVENTS) {
+    Object.defineProperty(SpeechRecognition.prototype, 'on' + type, {
+      configurable: true, enumerable: true,
+      get(this: SpeechRecognition) { return this._handler(type); },
+      set(this: SpeechRecognition, h: Handler) { this._setHandler(type, h); },
+    });
+  }
+  subscribe(json => {
+    let e: { id: number; type: string };
+    try { e = JSON.parse(json); } catch { return; }
+    running.get(e.id)?._receive(e);
+  });
+  const globals: Record<string, unknown> = { SpeechRecognition, webkitSpeechRecognition: SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent, SpeechRecognitionResultList, SpeechRecognitionResult, SpeechRecognitionAlternative };
+  for (const [name, value] of Object.entries(globals)) Object.defineProperty(window, name, { configurable: true, enumerable: false, writable: true, value });
+}
+
 if (process.platform === 'darwin') {
   contextBridge.executeInMainWorld({ func: installShare, args: [(json: string) => ipcRenderer.invoke('habitab:share', json)] });
+}
+// Linux has no recognizer yet (the API stays as Electron has it).
+if (process.platform === 'darwin' || process.env?.HABITAB_FAKE_SPEECH === '1') {
+  contextBridge.executeInMainWorld({ func: installSpeech, args: [
+    (json: string) => ipcRenderer.invoke('habitab:speech', json),
+    (cb: (json: string) => void) => { ipcRenderer.on('habitab:speech', (_e, json: string) => cb(json)); },
+  ] });
 }

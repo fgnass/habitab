@@ -5,12 +5,14 @@
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { demoSite } from '../tests/integration/demo-site.mjs';
+import { bridgeEnv, fakeClient } from '../tests/integration/bridge-env.mjs';
 import { McpClient, sleep } from '../tests/integration/mcp-client.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -19,11 +21,15 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const electronBin = createRequire(path.join(root, 'package.json'))('electron');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hb-shot-'));
-const env = {
-  HABITAB_HOME: path.join(tmp, 'home'), HABITAB_SOCKET: path.join(os.tmpdir(), `hb-shot-${process.pid}.sock`),
-  HABITAB_NO_APP_LAUNCH: '1', HABITAB_TEST_CONTROL: '1', HABITAB_TEST_VISIBLE: '1', CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1',
-  CLAUDE_CODE_MESSAGING_SOCKET: '', CLAUDE_CODE_MESSAGING_TOKEN: '', HABITAB_CODEX_COMMAND: '',
-};
+const env = bridgeEnv(tmp, { HABITAB_TEST_VISIBLE: '1' });
+// The same dictation language on every Mac (the default follows the system's languages).
+fs.mkdirSync(env.HABITAB_HOME, { recursive: true });
+fs.writeFileSync(path.join(env.HABITAB_HOME, 'ui.json'), JSON.stringify({ dictationLanguage: 'en-US' }));
+// A stand-in for Claude Code's inbox socket: the shop session has a channel for feedback.
+const inboxPath = path.join(tmp, 'inbox.sock');
+const inbox = net.createServer(sock => sock.resume());
+await new Promise(r => inbox.listen(inboxPath, r));
+const claudeEnv = { ...env, CLAUDE_CODE_MESSAGING_SOCKET: inboxPath, CLAUDE_CODE_MESSAGING_TOKEN: 'shot' };
 // Development builds only: Electron warns about the CSP in each page's console.
 const appEnv = { ...process.env, ...env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' };
 const app = spawn(electronBin, [root], { env: appEnv, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -39,17 +45,17 @@ const ask = (line, key) => new Promise(r => {
 const page = http.createServer(demoSite);
 await new Promise(r => page.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${page.address().port}`;
-const launcher = ['node', path.join(root, 'dist/launcher/main.js'), 'mcp', '--', 'npx', '-y', 'chrome-devtools-mcp@latest', '--isolated'];
-const session = async (name, clientName, url, meta) => {
+// The server below a script named like the client; the bridge finds the client in the process tree.
+const session = async (name, kind, url) => {
   const d = path.join(tmp, name); fs.mkdirSync(path.join(d, '.git'), { recursive: true });
-  const c = new McpClient(launcher[0], launcher.slice(1), { env, cwd: d, clientName });
+  const c = new McpClient(fakeClient(env, kind), [], { env: kind === 'claude' ? claudeEnv : env, cwd: d });
   await c.initialize();
-  await c.tool('navigate_page', { pageId: 1, url }, meta);
+  await c.tool('navigate_page', { pageId: 1, url });
   return c;
 };
 
 // Claude Code works through the shop up to the broken checkout; Codex reads the API docs.
-const a = await session('juice-shop', 'claude-code', `${base}/shop`);
+const a = await session('juice-shop', 'claude', `${base}/shop`);
 for (const [tool, args] of [
   ['evaluate_script', { pageId: 1, function: '() => { window.scrollTo({ top: 520 }); return scrollY; }' }],
   ['new_page', { url: `${base}/shop/juice/blood-orange` }],
@@ -63,7 +69,7 @@ for (const [tool, args] of [
   ['navigate_page', { pageId: 4, url: `${base}/shop/checkout` }],
   ['list_console_messages', { pageId: 4 }],
 ]) { await sleep(900); await a.tool(tool, args); }
-const b = await session('relay-docs', 'codex-mcp-client', `${base}/docs/messages/send`, { threadId: '019e1c2a-77aa-7c10-b0f3-1d2e3f4a5b6c' });
+const b = await session('relay-docs', 'codex', `${base}/docs/messages/send`);
 await sleep(1200);
 
 const st = await ask('state', 'state');
@@ -84,6 +90,19 @@ const crop = (from, name, [h, w, y, x]) => {
 };
 const tmpShot = name => shot(`raw-${name}`);
 
+// The count's context menu (see problemsMenu in main.ts), drawn like a macOS menu.
+const MENU = `(() => {
+  const m = document.createElement("div"); m.id = "hb-menu";
+  m.style.cssText = "position:fixed;z-index:99999;left:" + (innerWidth - 249) + "px;top:2px;width:236px;padding:5px;border-radius:10px;background:rgba(242,242,242,.97);box-shadow:0 0 0 .5px rgba(0,0,0,.22),0 10px 30px rgba(0,0,0,.22);font:13px -apple-system,system-ui;color:#1d1d1f";
+  const item = (t, on) => '<div style="padding:3px 10px;border-radius:5px;' + (on ? 'background:#0a7aff;color:#fff' : '') + '">' + t + '</div>';
+  m.innerHTML = item("Send 3 Console Errors to Agent", true) + item("Open Console") + '<div style="height:1px;margin:5px 10px;background:rgba(0,0,0,.12)"></div>' + item("Clear");
+  document.body.append(m); return "ok";
+})()`.replace(/\n\s*/g, ' ');
+// Page coordinates of the deposit line in the order box, and the note about it.
+const DEPOSIT = { x: 818, y: 496 };
+const NOTE = 'Show the deposit next to each bottle, not only here. People think it is a fee.';
+const ANNOTATE_CROP = [1030, 940, 470, 1940];
+
 control('deselect');
 await sleep(1500);
 control('deselect');
@@ -96,24 +115,39 @@ control(`action ${shop.id} timeline false`);
 await sleep(600);
 // The error count opens the tab's console: the count in the top bar and the docked console.
 control(`action ${shop.id} problems`);
+await sleep(1800);
+// A native menu is a window of its own that `screencapture -l` does not see, and
+// opening one would take the user's pointer. So the shot shows a copy of the count's
+// context menu (same items) in the DevTools view, at the count.
+control(`ui devtools ${MENU}`);
 crop(await tmpShot('problems'), 'problems', [576, 1037, 0, 1843]);
+control('ui devtools document.getElementById("hb-menu")?.remove()');
+// Still a browser: the phone preset of responsive mode, DevTools docked beside it.
 control(`devtools ${shop.id}`);
 await sleep(600);
 control(`devtools ${shop.id}`);
-await shot('devtools');
-control(`devtools ${shop.id}`);
-await sleep(600);
-control(`action ${shop.id} responsive`);
-crop(await shot('responsive'), 'control', [230, 2318, 0, 562]);
 control(`action ${shop.id} responsive`);
 await sleep(600);
-control(`action ${shop.id} annotate true`);
-await shot('annotate');
+control(`action ${shop.id} emulate {"preset":"responsive","width":390,"fillHeight":true}`);
+await shot('browser', 2500);
+control(`devtools ${shop.id}`);
+control(`action ${shop.id} responsive`);
+await sleep(600);
+// You have control: the count in the top bar, and the button for an own tab.
+control(`interact ${shop.id}`);
+crop(await tmpShot('control'), 'control', [150, 2318, 0, 562]);
+control(`hold ${shop.id} off`);
+// Marking: the element comes marked (like "Send Element to Agent…"), a note is written.
+control(`sendelement ${shop.id} ${DEPOSIT.x} ${DEPOSIT.y}`);
+await sleep(800);
+control(`ui annotator document.getElementById("text").value = ${JSON.stringify(NOTE)}`);
+crop(await tmpShot('annotate'), 'annotate', ANNOTATE_CROP);
 
 // KEEP_RAW=1 keeps the uncropped shots (to find new crop rectangles).
 if (!process.env.KEEP_RAW) for (const f of fs.readdirSync(outDir)) if (f.startsWith('raw-')) fs.rmSync(path.join(outDir, f));
 await Promise.race([Promise.all([a, b].map(x => x.close().catch(() => {}))), sleep(4000)]);
 if (app.exitCode === null) { app.kill(); await new Promise(r => app.once('exit', r)); }
+inbox.close();
 page.close();
 fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 process.exit(0);

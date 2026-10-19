@@ -3,7 +3,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { classify } from '../../installer/model';
 import { applyEdits, stringArrayOf, stringOf, TomlScanner } from '../../installer/toml';
-import { parseCommand, rewriteServerArgs, wrapper } from '../../shared/server-command';
+import { parseCommand, wrapper } from '../../shared/server-command';
 import { launcherScript } from '../../shared/platform';
 
 const parse = (line: string) => { const [c, ...a] = line.split(' '); return parseCommand(c, a); };
@@ -33,9 +33,6 @@ test('launch options', () => {
   assert.equal(l.proxyServer, 'http://p:1');
   assert.equal(l.viewport, '1024x768');
   assert.equal(l.acceptInsecureCerts, true);
-  assert.deepEqual(
-    rewriteServerArgs(['--isolated', '--headless=true', '-e', '/c', '--viewport', '800x600', '--chromeArg', '--x', '--no-usage-statistics'], 'http://127.0.0.1:5'),
-    ['--viewport', '800x600', '--no-usage-statistics', '--browserUrl', 'http://127.0.0.1:5']);
 });
 
 test('wrapper round trip and classification', () => {
@@ -43,9 +40,14 @@ test('wrapper round trip and classification', () => {
   assert.deepEqual([c, a], ['/L/habitab', ['mcp', '--', 'npx', 'chrome-devtools-mcp@latest', '--isolated']]);
   assert.deepEqual(wrapper.unwrap(c, a), ['npx', ['chrome-devtools-mcp@latest', '--isolated']]);
   const base = { client: 'codex' as const, scope: 'user', file: 'f', name: 'n' };
-  assert.equal(classify({ ...base, command: c, args: a }, '/L/habitab')?.status, 'migrated');
-  assert.equal(classify({ ...base, command: '/old/habitab', args: a }, '/L/habitab')?.status, 'updatePath');
-  assert.equal(classify({ ...base, command: 'npx', args: ['chrome-devtools-mcp'] }, '/L/habitab')?.status, 'migrate');
+  const wrapped = classify({ ...base, command: c, args: a });
+  assert.equal(wrapped?.status, 'unwrap');
+  assert.deepEqual([wrapped?.proposedCommand, wrapped?.proposedArgs], ['npx', ['chrome-devtools-mcp@latest', '--isolated']]);
+  assert.equal(classify({ ...base, command: 'npx', args: ['chrome-devtools-mcp'] })?.status, 'ok');
+  assert.equal(classify({ ...base, command: 'npx', args: ['chrome-devtools-mcp', '--user-data-dir', '/p'] })?.status, 'ok');
+  for (const args of [['chrome-devtools-mcp', '--autoConnect'], ['chrome-devtools-mcp', '--browser-url', 'http://x:1'], ['chrome-devtools-mcp', '--channel', 'canary']]) {
+    assert.equal(classify({ ...base, command: 'npx', args })?.status, 'conflict', args.join(' '));
+  }
 });
 
 test('TOML scanner and byte-exact edits', () => {
@@ -83,7 +85,7 @@ line"""
   assert.throws(() => new TomlScanner('a = "unterminated\n'));
 });
 
-test('launcher script falls back to the original command', () => {
+test('the habitab script runs a 0.2 wrapper command unchanged when the app is gone', () => {
   const script = launcherScript('/Apps/Habitab.app/Contents/MacOS/Habitab', path.join('/x', "it's", 'main.js'));
   assert.match(script, /ELECTRON_RUN_AS_NODE=1 exec "\$APP" "\$JS" "\$@"/);
   assert.match(script, /JS='\/x\/it'\\''s\/main\.js'/);

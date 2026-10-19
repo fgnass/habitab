@@ -1,7 +1,7 @@
 // Serializable snapshot of all sessions for the UI views.
 import { canPush } from '../shared/ipc';
 import { sidebarMode } from './prefs';
-import { isActiveTab, type Session, type SessionManager } from './sessions';
+import { isActiveTab, newProblems, type Session, type SessionManager } from './sessions';
 
 export type Phase = 'connected' | 'tool' | 'idle' | 'disconnected' | 'ended' | 'kept';
 
@@ -21,8 +21,9 @@ export function uiState(m: SessionManager) {
       return {
         id: t.id, title: wc.getTitle(), url, loading: wc.isLoading(), active: t === s.active, inactive: !isActiveTab(s, t), debuggerPaused: !!t.debuggerPaused, busy: !!t.busy,
         isBlank: !url || url === 'about:blank', fixedSize: t.fixedSize ?? null, targetUrl: t.targetUrl ?? '',
-        /** Console errors; repeated ones count once per entry. */
-        problems: t.problems.length,
+        /** Console errors the user has not seen (badge); repeated ones count once per entry. */
+        problems: newProblems(s, t),
+        own: !!t.own,
       };
     });
     const awc = s.active?.view.webContents;
@@ -33,8 +34,6 @@ export function uiState(m: SessionManager) {
       project: s.meta.projectName ?? 'No Project',
       projectPath: s.meta.projectRoot ?? s.meta.cwd ?? '',
       client: s.meta.client ?? null,
-      clientName: s.meta.clientName ?? null,
-      clientVersion: s.meta.clientVersion ?? null,
       agentSessionId: s.meta.agentSessionId ?? null,
       agentSessionSource: s.meta.agentSessionSource ?? null,
       phase: phase(s),
@@ -47,10 +46,7 @@ export function uiState(m: SessionManager) {
       timeline: s.id === m.selected ? s.timeline.filter(x => x.tab === s.active?.id) : null,
       timelineCount: s.timeline.length,
       held: s.held,
-      feedback: s.feedback ? { question: s.feedback.question ?? null, since: s.feedback.since } : null,
-      feedbackQueued: s.feedbackQueue.length,
-      channel: !!s.meta.channel,
-      /** Feedback reaches the agent at once, also when no call waits. */
+      /** Feedback reaches the agent as a note (Claude Code inbox, Codex app-server). */
       push: canPush(s.meta),
       autoResumeIn: s.autoResumeAt ? Math.max(0, s.autoResumeAt - Date.now()) : null,
       pinned: s.pinned,
@@ -58,13 +54,16 @@ export function uiState(m: SessionManager) {
       persistentProfile: m.hasPersistentProfile(s),
       pausesDebugger: m.pausesDebugger(s),
       endReason: s.endReason ?? null,
+      /** Still served through a launcher of Habitab 0.2: restart the agent's MCP server. */
+      legacy: !!s.legacy,
       protectedBy: s.protectedBy ?? null,
       devtools: !!s.devtools,
       browser: !!s.ctx,
       tabs,
-      nav: awc ? { url: awc.getURL(), canGoBack: awc.navigationHistory.canGoBack(), canGoForward: awc.navigationHistory.canGoForward(), loading: awc.isLoading(), fixedSize: s.active?.fixedSize ?? null, emulation: s.active?.emulation ?? null, targetUrl: s.active?.targetUrl ?? '', debuggerPaused: !!s.active?.debuggerPaused, busy: !!s.active?.busy, frame: s.active?.emulation ? s.active.frame ?? null : null,
+      nav: awc ? { url: awc.getURL(), canGoBack: awc.navigationHistory.canGoBack(), canGoForward: awc.navigationHistory.canGoForward(), loading: awc.isLoading(), fixedSize: s.active?.fixedSize ?? null, emulation: s.active?.emulation ?? null, targetUrl: s.active?.targetUrl ?? '', debuggerPaused: !!s.active?.debuggerPaused, busy: !!s.active?.busy, own: !!s.active?.own, frame: s.active?.emulation ? s.active.frame ?? null : null,
         // The front tab's console errors in full (texts shortened).
         problems: (s.active?.problems ?? []).map(p => ({ ...p, text: p.text.slice(0, 600) })),
+        newProblems: s.active ? newProblems(s, s.active) : 0,
         find: s.active?.find ?? null } : null,
     };
   });

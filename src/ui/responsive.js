@@ -2,14 +2,15 @@
 const api = window.habitab;
 const $ = id => document.getElementById(id);
 
-// Tailwind CSS default breakpoints (min-width), plus the full free width.
-const BREAKPOINTS = [['sm', 640], ['md', 768], ['lg', 1024], ['xl', 1280], ['2xl', 1536]];
+// A phone (iPhone width), common breakpoints (min-width), and the full free width.
+// The two ends show an icon, the breakpoints their name.
+const PRESETS = [[icon('smartphone'), 390, 'Phone: 390 px (iPhone)'], ...[['sm', 640], ['md', 768], ['lg', 1024], ['xl', 1280], ['2xl', 1536]].map(([n, w]) => [n, w, `${n}: ${w} px`]), [icon('move-horizontal'), null, 'Fill the free width']];
 
-for (const [name, width] of [...BREAKPOINTS, ['Full', null]]) {
+for (const [label, width, title] of PRESETS) {
   const b = document.createElement('button');
-  b.textContent = name;
+  b.append(label);
   b.dataset.width = width ?? '';
-  b.title = width ? `${name}: ${width} px (Tailwind)` : 'Fill the free width';
+  b.title = title;
   b.onclick = () => emulate(width ? { preset: 'responsive', width, fillHeight: current?.fillHeight ?? true } : { preset: 'responsive', fillWidth: true });
   $('bps').appendChild(b);
 }

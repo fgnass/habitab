@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { defaultHome, defaultSocket, launcherFileName } from './platform';
+import { browserFileName, defaultHome, defaultSocket, launcherFileName } from './platform';
 
 // HABITAB_HOME and HABITAB_SOCKET override the defaults. Tests use them to
 // run a complete, separate instance next to a real installation.
@@ -9,6 +9,8 @@ export const paths = {
   get socket() { return process.env.HABITAB_SOCKET || defaultSocket(this.home); },
   get bin() { return path.join(this.home, 'bin'); },
   get launcher() { return path.join(this.bin, launcherFileName()); },
+  /** Chrome stand-in for chrome-devtools-mcp's global config (executablePath). */
+  get browser() { return path.join(this.bin, browserFileName()); },
   get logs() { return path.join(this.home, 'logs'); },
   get backups() { return path.join(this.home, 'backups'); },
   get manifest() { return path.join(this.home, 'install-manifest.json'); },

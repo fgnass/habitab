@@ -1,6 +1,6 @@
-// Connection from a launcher to the Habitab app. The MCP server starts
-// without it; the app is only needed (and started) when the agent uses the
-// browser. The link reconnects by itself, for example after an app restart.
+// Connection from a browser bridge to the Habitab app. The app is started
+// when it is not running. The link reconnects by itself, for example after
+// an app restart.
 import fs from 'node:fs';
 import net from 'node:net';
 import { LineSocket, Message, SessionMeta } from '../shared/ipc';
@@ -15,7 +15,6 @@ export class ManagerLink {
   private lastWake = 0;
   private connecting?: Promise<boolean>;
   onHold?: (hold: boolean) => void;
-  onFeedback?: (m: Extract<Message, { type: 'feedbackResult' }>) => void;
   onFeedbackPush?: (content: string) => void;
 
   constructor(private hello: () => Message) {}
@@ -58,8 +57,6 @@ export class ManagerLink {
       cb?.(m.port, m.error);
     } else if (m.type === 'hold') {
       this.onHold?.(m.hold);
-    } else if (m.type === 'feedbackResult') {
-      this.onFeedback?.(m);
     } else if (m.type === 'feedbackPush') {
       this.onFeedbackPush?.(m.content);
     }
@@ -102,9 +99,10 @@ export class ManagerLink {
     }
   }
 
-  close(reason: string): void {
+  /** Ends the link. `signOff` tells the app that the session is over; without it the session waits for the next bridge. */
+  close(reason: string, signOff = true): void {
     this.closed = true;
-    this.line?.send({ type: 'bye', reason });
+    if (signOff) this.line?.send({ type: 'bye', reason });
     this.line?.socket.end();
   }
 }

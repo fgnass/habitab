@@ -56,11 +56,10 @@ function problemsView(s, t, cls) {
 }
 
 function statusText(s) {
-  if (s.feedback) return 'Waiting for your feedback';
-  if (s.feedbackQueued) return `${s.feedbackQueued} feedback${s.feedbackQueued > 1 ? 's' : ''} for the agent’s next call`;
   if (s.held) return s.currentTool ? `Waiting · ${toolLabel(s.currentTool.tool)}` : 'You have control';
   if (s.currentTool) return `▶ ${toolText(s.currentTool.tool, s.currentTool.summary)}`;
   if (s.phase === 'disconnected' || isEnded(s)) return PHASE[s.phase];
+  if (s.legacy) return 'Old launcher: restart the agent’s MCP server';
   return '';
 }
 
@@ -84,6 +83,7 @@ function cardView(s, t) {
   const meta = el('div', 'meta');
   meta.appendChild(el('span', 'host ellipsis', t.isBlank ? '' : host(t.url)));
   if (t.problems) meta.appendChild(problemsView(s, t, 'chip'));
+  if (t.own) meta.appendChild(titled(icon('user'), 'Your own tab: the agent goes on while you use it'));
   if (t.debuggerPaused) meta.appendChild(titled(icon('bug-off'), "Debugger paused: the agent's debugger is off in this tab until the agent works in it again"));
   info.appendChild(meta);
   card.appendChild(info);
@@ -104,7 +104,7 @@ function sessionView(s, tabs) {
   const client = el('span', 'client');
   // Static SVG strings from client-icons.js, never page content.
   client.innerHTML = window.CLIENT_ICONS[s.client] ?? '';
-  client.title = [window.CLIENT_NAMES[s.client] ?? s.clientName ?? 'Unknown client', s.clientVersion].filter(Boolean).join(' ');
+  client.title = window.CLIENT_NAMES[s.client] ?? 'Unknown client';
   const project = el('span', 'project ellipsis', s.project);
   project.title = s.projectPath;
   const dot = el('span', 'dot ' + (s.held ? 'held' : s.phase));
@@ -151,7 +151,7 @@ function inactiveView(rows) {
 /** What the list shows: the same input builds the same list, so it is left alone (open tooltips stay). */
 let rendered = '';
 function renderKey() {
-  const fields = ['id', 'project', 'projectPath', 'client', 'clientName', 'clientVersion', 'persistentProfile', 'muted', 'pinned', 'phase', 'feedback', 'feedbackQueued', 'held', 'currentTool', 'statusTab', 'tabs'];
+  const fields = ['id', 'project', 'projectPath', 'client', 'persistentProfile', 'muted', 'pinned', 'phase', 'held', 'currentTool', 'statusTab', 'tabs'];
   return JSON.stringify([state.selected, state.sidebar, q.value, inactiveOpen, [...thumbs.keys()], state.sessions.map(s => fields.map(f => s[f]))]);
 }
 

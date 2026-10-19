@@ -7,7 +7,7 @@
 #   ./install.sh --uninstall   restore client configurations and remove the app
 #   ./install.sh --uninstall --yes   same, also delete data without asking
 #
-# The MCP setup of Claude Code and Codex happens in the app (Habitab → Setup …).
+# The one setting (chrome-devtools-mcp's global config) happens in the app (Habitab → Setup …).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -146,7 +146,7 @@ elif [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" =
     || fail "Could not set up $TARGET/chrome-sandbox (owner root, mode 4755)."
 fi
 
-# --- start (the app writes the launcher script that client configs call)
+# --- start (the app writes the habitab command and the browser script)
 say "Starting Habitab …"
 if [ "$OS" = mac ]; then
   # `open` does not pass the environment; forward Habitab's own variables
@@ -162,7 +162,7 @@ for _ in $(seq 1 40); do
   [ -x "$LAUNCHER" ] && grep -q "$TARGET" "$LAUNCHER" 2>/dev/null && break
   sleep 0.5
 done
-[ -x "$LAUNCHER" ] || fail "Habitab did not create the launcher script ($LAUNCHER). Log: $HOME_DIR/logs/app.log"
+[ -x "$LAUNCHER" ] || fail "Habitab did not create the habitab command ($LAUNCHER). Log: $HOME_DIR/logs/app.log"
 
 echo
 if [ "$OS" = mac ]; then

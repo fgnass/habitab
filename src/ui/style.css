@@ -17,6 +17,8 @@
   --claude: #d97757;
   --codex: #10a37f;
   --page: #ffffff;
+  /* Behind a page with its own size: darker than most pages, so their edges show. */
+  --backdrop: #e2e2e5;
   /* Sidebar background where macOS vibrancy is missing. */
   --sidebar: #ececee;
   font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -33,6 +35,7 @@
     --field: rgba(255, 255, 255, .08);
     --bar: #2b2b2d;
     --page: #1e1e1e;
+    --backdrop: #141415;
     --sidebar: #232325;
   }
 }

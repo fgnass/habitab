@@ -6,7 +6,7 @@ import path from 'node:path';
 
 const dir = import.meta.dirname;
 let failed = 0;
-for (const t of ['app.mjs', 'install.mjs']) {
+for (const t of ['app.mjs', 'browser.mjs', 'install.mjs']) {
   console.log(`\n== ${t}`);
   const r = spawnSync(process.execPath, [path.join(dir, t)], {
     stdio: ['ignore', 'pipe', 'inherit'],

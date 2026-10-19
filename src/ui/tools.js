@@ -12,7 +12,7 @@ const TOOL_LABELS = {
   performance_start_trace: 'Start trace', performance_stop_trace: 'Stop trace', performance_analyze_insight: 'Analyze trace',
   lighthouse_audit: 'Lighthouse audit', screencast_start: 'Start screencast', screencast_stop: 'Stop screencast',
   take_heapsnapshot: 'Heap snapshot', open_devtools: 'Open DevTools', reveal_in_devtools: 'Reveal in DevTools',
-  wait_for_user_feedback: 'Ask you', Download: 'Download',
+  wait_for_user_feedback: 'Get feedback', Download: 'Download',
 };
 
 /** "take_snapshot" -> "Read page"; unknown tools: "get_tab_id" -> "Get tab id". */

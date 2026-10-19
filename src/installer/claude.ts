@@ -33,9 +33,9 @@ export function scanClaude(): Finding[] {
     for (const name of Object.keys(servers).sort()) {
       const entry = servers[name];
       if (!entry || typeof entry.command !== 'string') continue;
-      const found = classify({ client: 'claude', scope, file: f, project, name, command: entry.command, args: Array.isArray(entry.args) ? entry.args : [], entry, shadow });
+      const found = classify({ client: 'claude', scope, file: f, project, name, command: entry.command, args: Array.isArray(entry.args) ? entry.args : [], entry, env: entry.env && typeof entry.env === 'object' ? entry.env : undefined, shadow });
       if (!found) continue;
-      if (readOnly && found.status !== 'external') {
+      if (readOnly && found.status !== 'conflict') {
         found.status = 'unsupported';
         found.detail = readOnly;
         delete found.proposedCommand; delete found.proposedArgs;
@@ -116,33 +116,6 @@ function current(f: Finding): any {
 
 function verify(f: Finding, command: string): void {
   if (current(f)?.command !== command) throw new Error(`Change to ${f.name} did not arrive in ${claudeConfigFile()}`);
-}
-
-export function applyClaude(f: Finding, backup?: string): ManifestEntry {
-  if (!f.entry || !f.proposedCommand || !f.proposedArgs) throw new Error(`No proposal for ${f.name}`);
-  const original = f.entry;
-  const entry = { ...original, type: original.type ?? 'stdio', command: f.proposedCommand, args: f.proposedArgs };
-  try {
-    write(f, entry, !f.shadow);
-  } catch (e) {
-    // If remove worked but add failed, put the original back.
-    if (!f.shadow) try { write(f, original, false); } catch {}
-    throw e;
-  }
-  const resultScope = f.shadow ? 'local' : f.scope;
-  const resultFinding = { ...f, scope: resultScope, file: claudeConfigFile() };
-  verify(resultFinding, f.proposedCommand);
-  // A path update keeps the original recorded at the first installation.
-  const prior = f.status === 'updatePath' ? manifest.latest(f.id) : undefined;
-  const inner = f.status === 'updatePath' ? wrapper.unwrap(f.command, f.args) : undefined;
-  return {
-    findingId: f.shadow ? findingId('claude', 'local', claudeConfigFile(), f.project, f.name) : f.id,
-    client: 'claude', scope: f.scope, file: f.file, project: f.project, name: f.name, shadow: !!f.shadow,
-    originalCommand: prior?.originalCommand ?? inner?.[0] ?? f.command,
-    originalArgs: prior?.originalArgs ?? inner?.[1] ?? f.args,
-    originalEntry: prior ? prior.originalEntry : inner ? undefined : original,
-    backup, appliedAt: new Date().toISOString(),
-  };
 }
 
 /**

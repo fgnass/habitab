@@ -14,10 +14,13 @@
   .hidden { display: none !important; }
   /* A dimension that follows the free space: shown, but quiet. */
   input.auto { color: var(--text-3); }
-  /* Tailwind breakpoints: set the width, the height keeps filling. */
-  .bps { display: flex; gap: 2px; }
-  .bps button { padding: 0 7px; font-size: 11.5px; color: var(--text-2); }
-  .bps button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  /* Width presets (phone, common breakpoints, full): set the width, the height keeps filling. */
+  .bps { display: flex; gap: 1px; padding: 2px; border-radius: 8px; background: var(--field); }
+  .bps button { height: 22px; padding: 0 8px; border-radius: 6px; color: var(--text-2); font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+  .bps button:hover:not(.on) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+  .bps button:has(.icon) { padding: 0 7px; }
+  .bps .icon { width: 14px; height: 14px; display: block; }
+  .bps button.on { color: var(--accent); background: var(--page); box-shadow: 0 0 0 .5px var(--border), 0 1px 2px rgba(0, 0, 0, .08); }
   #close { position: absolute; right: 6px; top: 50%; translate: 0 -50%; width: 26px; }
   /* Too narrow for everything: the breakpoints matter most, the size next. */
   @media (max-width: 480px) { .note { display: none; } }

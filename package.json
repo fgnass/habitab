@@ -6,8 +6,9 @@
   "desktopName": "habitab.desktop",
   "main": "dist/app/main.js",
   "private": true,
+  "license": "MIT",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs && node scripts/build-speech-helper.mjs",
     "start": "npm run build && electron .",
     "preview": "npm run build && node tests/integration/showcase.mjs",
     "test": "npm run build && node --test dist/tests/unit/*.test.js",
@@ -30,7 +31,8 @@
       "identity": null,
       "extendInfo": {
         "NSCameraUsageDescription": "Pages you test in Habitab can use the camera when you allow it.",
-        "NSMicrophoneUsageDescription": "Pages you test in Habitab can use the microphone when you allow it.",
+        "NSMicrophoneUsageDescription": "Pages you test in Habitab can use the microphone when you allow it, and you can dictate comments to the agent.",
+        "NSSpeechRecognitionUsageDescription": "Habitab turns speech into text on this Mac: for pages that use speech recognition, and for your comments to the agent.",
         "NSLocalNetworkUsageDescription": "Pages you test in Habitab can reach devices and servers on your local network."
       }
     },

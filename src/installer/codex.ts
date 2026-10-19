@@ -91,10 +91,8 @@ export function scanCodex(): Finding[] {
       if (!command || !args) continue;
       const f = classify({ client: 'codex', scope, file, project, name: e.name, command, args });
       if (!f) continue;
-      if (recorded && f.status !== 'migrated' && f.status !== 'updatePath') continue;
-      if (scope === 'project' && (f.status === 'migrate' || f.status === 'updatePath')) {
-        f.detail += ' Caution: project file, often shared in the repository. The launcher path is valid only on this computer.';
-      }
+      // Files known only from the manifest: only their wrapped entries matter.
+      if (recorded && f.status !== 'unwrap') continue;
       findings.push(f);
     }
     for (const name of recorded ? [] : unsupported) {
@@ -122,11 +120,7 @@ function pluginFindings(): Finding[] {
             if (typeof entry?.command !== 'string') continue;
             const f = classify({ client: 'codex', scope: 'plugin', file: full, name, command: entry.command, args: entry.args ?? [] });
             if (!f) continue;
-            if (f.status !== 'external') {
-              f.status = 'unsupported';
-              delete f.proposedCommand; delete f.proposedArgs;
-              f.detail = `Plugin server. An [mcp_servers.${name}] entry in config.toml overrides it; add one, and Habitab takes it over.`;
-            }
+            f.detail = `Plugin server. ${f.detail}`;
             findings.push(f);
           }
         } catch {}
@@ -148,41 +142,6 @@ function writeAtomic(file: string, text: string): void {
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.habitab-tmp`);
   fs.writeFileSync(tmp, text, { mode });
   fs.renameSync(tmp, file);
-}
-
-export function applyCodex(f: Finding, backup?: string): ManifestEntry {
-  if (!f.proposedCommand || !f.proposedArgs) throw new Error(`No proposal for ${f.name}`);
-  const { text, s, entries } = load(f.file);
-  const e = entries.find(x => x.name === f.name);
-  if (!e || stringOf(e.command.value) !== f.command || JSON.stringify(e.args ? stringArrayOf(e.args.value) : []) !== JSON.stringify(f.args)) {
-    throw new Error(`${f.file} changed since the check. Check again.`);
-  }
-  const commandRaw = TomlScanner.quote(f.proposedCommand);
-  const argsRaw = TomlScanner.array(f.proposedArgs);
-  const edits: TextEdit[] = [{ start: e.command.valueStart, end: e.command.valueEnd, replacement: commandRaw }];
-  if (e.args) edits.push({ start: e.args.valueStart, end: e.args.valueEnd, replacement: argsRaw });
-  else {
-    const end = e.command.lineEnd;
-    const nl = end === 0 || s.bytes[end - 1] !== 10 ? '\n' : '';
-    edits.push({ start: end, end, replacement: `${nl}args = ${argsRaw}\n` });
-  }
-  const updated = applyEdits(text, edits);
-  const check = locate(new TomlScanner(updated)).entries.find(x => x.name === f.name);
-  if (!check || stringOf(check.command.value) !== f.proposedCommand || JSON.stringify(stringArrayOf(check.args?.value)) !== JSON.stringify(f.proposedArgs)) {
-    throw new Error('Check after editing failed; file not written');
-  }
-  writeAtomic(f.file, updated);
-  const isUpdate = f.status === 'updatePath';
-  const prior = isUpdate ? manifest.latest(f.id) : undefined;
-  const inner = wrapper.unwrap(f.command, f.args);
-  return {
-    findingId: f.id, client: 'codex', scope: f.scope, file: f.file, project: f.project, name: f.name, shadow: false,
-    originalCommand: isUpdate ? prior?.originalCommand ?? inner?.[0] ?? f.command : f.command,
-    originalArgs: isUpdate ? prior?.originalArgs ?? inner?.[1] ?? f.args : f.args,
-    originalCommandRaw: isUpdate ? prior?.originalCommandRaw : s.text(e.command.valueStart, e.command.valueEnd),
-    originalArgsRaw: isUpdate ? prior?.originalArgsRaw : e.args ? s.text(e.args.valueStart, e.args.valueEnd) : null,
-    wrappedCommandRaw: commandRaw, wrappedArgsRaw: argsRaw, backup, appliedAt: new Date().toISOString(),
-  };
 }
 
 export function restoreCodex(f: Finding, m: ManifestEntry | undefined): string {
