@@ -170,6 +170,9 @@ function layout(): void {
         }
         const scale = e.scale ?? 1;
         const w = Math.round(e.width * scale), h = Math.round(e.height * scale);
+        // The agent's size is not scaled (its screenshots would get smaller): the bar says when it is cut off.
+        const cut = e.by === 'agent' && (w > room.width || h > room.height);
+        if (cut !== !!e.cut) { e.cut = cut; framesChanged = true; }
         const pos = centered(w, area.y + RBAR + FRAME_TOP);
         t.view.setBounds({ ...pos, width: w, height: h });
         const frame = { x: pos.x - area.x, y: pos.y - area.y, width: w, height: h, scale };
@@ -412,6 +415,8 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
       if (!s?.active || !e) return;
       const patch = args[0] ?? {};
       const next = { ...e, ...patch };
+      // The agent's size, now changed by the user: it fits the free space from now on.
+      if (e.by === 'agent' && patch.zoom === undefined) next.zoom = 'fit';
       // A given size fixes that dimension, unless the change says to fill it.
       if (patch.width !== undefined && patch.fillWidth === undefined) next.fillWidth = false;
       if (patch.height !== undefined && patch.fillHeight === undefined) next.fillHeight = false;

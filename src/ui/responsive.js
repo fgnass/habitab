@@ -36,6 +36,9 @@ api.onState(state => {
   $('zoom').title = 'The page is scaled to fit the free space';
   $('zoom').classList.toggle('hidden', !scaled);
   $('by').classList.toggle('hidden', e.by !== 'agent');
+  $('by').textContent = e.cut ? '· set by the agent, cut off' : '· set by the agent';
+  $('by').title = e.cut ? 'The page does not fit the free space, so a part of it is not visible. Change the size or make the window larger to see all of it.' : '';
+  $('by').classList.toggle('cut', !!e.cut);
 });
 
 for (const id of ['w', 'h']) {

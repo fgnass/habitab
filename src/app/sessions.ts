@@ -57,6 +57,8 @@ export interface Emulation {
   fillHeight?: boolean;
   by: 'user' | 'agent';
   scale?: number;
+  /** The agent's size does not fit the free space: the view cuts it off. */
+  cut?: boolean;
   /** The override last sent (width, height, scale), to send again only on change. */
   applied?: string;
 }

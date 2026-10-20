@@ -608,6 +608,18 @@ await b.tool('emulate', { pageId: pb, viewport: '500x400x1' });
 await sleep(400);
 emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
 check(emu?.by === 'agent' && emu.width === 500 && emu.height === 400, "the agent's emulation replaces the user's and shows in the bar", JSON.stringify(emu));
+// The agent's size is not scaled (its screenshots would shrink): too tall, the bar says it is cut off.
+await b.tool('emulate', { pageId: pb, viewport: '500x3000x1' });
+await sleep(400);
+emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
+check(emu?.by === 'agent' && emu.cut && emu.scale === 1, "an agent's size that does not fit is marked as cut off", JSON.stringify(emu));
+// The user changes it: from now on it is scaled to fit
+await control(`action ${sb.id} emulate {"preset": "responsive", "width": 390}`);
+await sleep(400);
+emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
+check(emu?.by === 'user' && emu.zoom === 'fit' && emu.scale < 1 && !emu.cut, "the user's change of the agent's size scales it to fit", JSON.stringify(emu));
+await b.tool('emulate', { pageId: pb, viewport: '500x400x1' });
+await sleep(400);
 // Marking in responsive mode: the overlay also covers the room beside the
 // viewport (for the form); a mark stays in the page and arrives in page coordinates.
 {
