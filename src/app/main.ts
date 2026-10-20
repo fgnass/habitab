@@ -199,10 +199,11 @@ function layout(): void {
   const sel = selected?.active?.view.webContents && !selected.active.view.webContents.isDestroyed() ? selected.active : undefined;
   const selDevtools = !!selected?.devtools && selected.devtoolsTab === sel;
   const selPageWidth = selDevtools ? pageWidthWithDevtools(area.width) : area.width;
-  responsive.setVisible(!!sel?.emulation);
-  responsive.setBounds(sel?.emulation ? { x: area.x, y: area.y, width: selPageWidth, height: RBAR } : { x: 0, y: 0, width: 1, height: 1 });
-  order.push(responsive);
   if (sel) order.push(sel.view);
+  // The responsive mode bar: with the timeline open, below its thumbnails, over the page (the page keeps its size).
+  responsive.setVisible(!!sel?.emulation);
+  responsive.setBounds(sel?.emulation ? { x: area.x, y: area.y + (timelineOpen ? STRIP : 0), width: selPageWidth, height: RBAR } : { x: 0, y: 0, width: 1, height: 1 });
+  order.push(responsive);
   if (selDevtools) order.push(selected!.devtools!);
   // Status line: above the page and DevTools; opened, it grows down over them.
   // Its view also holds the floating details (taller only while they are open).
