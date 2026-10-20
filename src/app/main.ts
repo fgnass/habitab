@@ -89,6 +89,12 @@ const FIND_W = 340, FIND_H = 40;
 let timelineOpen = false, timelinePreview = false;
 /** The change the user chose in the timeline (its first step's id); null: the newest one, live. */
 let timelineStep: number | null = null;
+/**
+ * What the preview view shows, as it reports it ('timelineShown'). Until it
+ * shows the chosen change, the view stays under the page: shown at once, it
+ * would show its last picture first (maybe of another session).
+ */
+let previewShown: { session: string; step: number } | null = null;
 /** Height of the bubble with the hovered link's URL; it sits at the right edge when the pointer is on the left. */
 const LINK = 24;
 let linkRight = false;
@@ -135,7 +141,8 @@ function layout(): void {
   const selected = manager.sessions.get(manager.selected ?? '');
   if (timelineOpen && !selected) timelineOpen = false;
   // The timeline is the front tab's: another tab (or session) ends the preview of an earlier step.
-  if (timelinePreview && !selected?.timeline.some(x => x.id === timelineStep && x.tab === selected.active?.id)) { timelinePreview = false; timelineStep = null; }
+  if (timelinePreview && !selected?.timeline.some(x => x.id === timelineStep && x.tab === selected.active?.id)) { timelinePreview = false; timelineStep = null; previewShown = null; }
+  const previewReady = timelinePreview && previewShown?.session === selected?.id && previewShown?.step === timelineStep;
   // The status line takes the same room in every session, so switching sessions resizes no page.
   const bar = selected ? STATUSBAR : 0;
   const area = { x: SIDEBAR, y: TOPBAR + bar, width: width - SIDEBAR, height: height - TOPBAR - bar };
@@ -182,6 +189,8 @@ function layout(): void {
       s.devtools.setBounds(dt ? { x: area.x + pageWidth, y: area.y + below, width: area.width - pageWidth, height: Math.max(1, area.height - below) } : { x: 0, y: 0, width: 1, height: 1 });
     }
   }
+  // The preview with a picture that is not the chosen one yet: under the background, where it renders unseen.
+  if (timelinePreview && !previewReady) order.push(timeline);
   // Background behind the selected page (also covers other sessions).
   empty.setBounds(area);
   empty.setVisible(true);
@@ -209,7 +218,7 @@ function layout(): void {
   const top = TOPBAR + bar + STRIP;
   const shotBounds = { x: area.x, y: top, width: selPageWidth, height: Math.max(1, height - top) };
   timeline.setBounds(timelinePreview ? shotBounds : { x: 0, y: 0, width: 1, height: 1 });
-  order.push(timeline);
+  if (previewReady) order.push(timeline);
   // Marking mode: the overlay covers the page area (in responsive mode also the
   // room around the viewport, so the comment form is not cut off there), or that
   // screenshot. The user marks only inside the page: its frame in the overlay.
@@ -363,7 +372,9 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'problemsClear': { if (s?.active) manager.clearProblems(s.active); return; }
     // Timeline: open or close, the large preview, screenshots of steps, open a step's URL.
     case 'timeline': return setTimelineOpen(typeof args[0] === 'boolean' ? args[0] : !timelineOpen);
-    case 'timelinePreview': { timelineStep = typeof args[0] === 'number' && timelineOpen ? args[0] : null; timelinePreview = timelineStep !== null; layout(); publish(); return; }
+    case 'timelinePreview': { timelineStep = typeof args[0] === 'number' && timelineOpen ? args[0] : null; timelinePreview = timelineStep !== null; if (!timelinePreview) previewShown = null; layout(); publish(); return; }
+    // The preview view shows this change now (or nothing: null): it may come to the front.
+    case 'timelineShown': { previewShown = typeof args[0] === 'string' && typeof args[1] === 'number' ? { session: args[0], step: args[1] } : null; layout(); return; }
     case 'statusHeight': { const h = Math.max(STATUSBAR, Math.round(args[0])); if (h !== statusHeight) { statusHeight = h; layout(); } return; }
     case 'timelineImages': {
       const x = manager.sessions.get(args[0]);
@@ -454,6 +465,7 @@ function setTimelineOpen(on: boolean): void {
   timelineOpen = on && !!selected();
   timelinePreview = false;
   timelineStep = null;
+  previewShown = null;
   layout();
   publish();
   if (timelineOpen) focusView(status);
