@@ -220,12 +220,20 @@ await a.tool('select_page', { pageId: pa2 });
 // Human control: tool calls wait
 await control(`hold ${sb.id} on`);
 await sleep(300);
+// The MCP server's own answers to page events (here a navigation by the user) are not the agent waiting
+await control(`select ${sb.id}`);
+await control(`ui page location.reload()`);
+await sleep(1500);
+check(!(await state()).sessions.find(s => s.id === sb.id).waiting, "the MCP server's own commands after a user's navigation do not count as waiting");
 let done = false;
 const held = b.tool('evaluate_script', { pageId: pb, function: '() => 42' }).then(r => { done = true; return r; });
 await sleep(2000);
 check(!done, 'tool call waits while the human has control');
+check((await state()).sessions.find(s => s.id === sb.id).waiting, 'the app knows that the agent waits for the user');
 await control(`hold ${sb.id} off`);
 check((await held).text.includes('42') && done, 'tool call continues after release');
+await sleep(200);
+check(!(await state()).sessions.find(s => s.id === sb.id).waiting, 'after release the agent no longer waits');
 
 // Automatic control: agent input does not count, a user click does
 await a.tool('press_key', { pageId: pa2, key: 'Tab' });

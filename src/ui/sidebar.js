@@ -40,6 +40,8 @@ function thumbView(s, t) {
   if (img) box.appendChild(img);
   // Thumbnails only: the error count sits on the thumbnail (full width: see problemsView).
   if (t.problems && state.sidebar === 'compact') box.appendChild(problemsView(s, t, 'badge'));
+  // Likewise the mark of the user's own tab.
+  if (t.own && state.sidebar === 'compact') box.appendChild(el('span', 'own badge')).appendChild(icon('user'));
   return box;
 }
 
@@ -56,7 +58,8 @@ function problemsView(s, t, cls) {
 }
 
 function statusText(s) {
-  if (s.held) return s.currentTool ? `Waiting · ${toolLabel(s.currentTool.tool)}` : 'You have control';
+  if (s.waiting) return s.currentTool ? `Waiting · ${toolLabel(s.currentTool.tool)}` : 'Agent waiting for you';
+  if (s.held) return 'You have control';
   if (s.currentTool) return `▶ ${toolText(s.currentTool.tool, s.currentTool.summary)}`;
   if (s.phase === 'disconnected' || isEnded(s)) return PHASE[s.phase];
   if (s.legacy) return 'Old launcher: restart the agent’s MCP server';
@@ -70,7 +73,7 @@ function cardView(s, t) {
   const card = el('div', 'card' + (s.id === state.selected && t.active ? ' sel' : '') + (isEnded(s) ? ' ended' : ''));
   // The session's status shows on one card only: the tab the agent works with.
   const status = t.id === s.statusTab ? statusText(s) : '';
-  card.title = state.sidebar === 'compact' ? [tabTitle(s, t), status, s.project].filter(Boolean).join('\n') : '';
+  card.title = state.sidebar === 'compact' ? [tabTitle(s, t), status, t.own && 'Your own tab', s.project].filter(Boolean).join('\n') : '';
   card.onclick = () => api.action('select', s.id, t.id);
   card.oncontextmenu = e => { e.preventDefault(); openMenu(s, t, e.clientX, e.clientY); };
   card.appendChild(thumbView(s, t));
@@ -151,7 +154,7 @@ function inactiveView(rows) {
 /** What the list shows: the same input builds the same list, so it is left alone (open tooltips stay). */
 let rendered = '';
 function renderKey() {
-  const fields = ['id', 'project', 'projectPath', 'client', 'persistentProfile', 'muted', 'pinned', 'phase', 'held', 'currentTool', 'statusTab', 'tabs'];
+  const fields = ['id', 'project', 'projectPath', 'client', 'persistentProfile', 'muted', 'pinned', 'phase', 'held', 'waiting', 'currentTool', 'statusTab', 'tabs'];
   return JSON.stringify([state.selected, state.sidebar, q.value, inactiveOpen, [...thumbs.keys()], state.sessions.map(s => fields.map(f => s[f]))]);
 }
 

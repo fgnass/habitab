@@ -35,6 +35,8 @@ export type Message =
   | { type: 'endpoint'; requestId: number; port?: number; error?: string }
   /** The user has control: the bridge holds the agent's commands (and releases them by itself after a limit). */
   | { type: 'hold'; hold: boolean }
+  /** Bridge to app: while the user has control, the agent's commands wait (true), or they went on (false). */
+  | { type: 'waiting'; waiting: boolean }
   /** Feedback for the agent: pushed into the Claude Code session through its inbox socket. */
   | { type: 'feedbackPush'; content: string }
   | { type: 'bye'; reason: string };

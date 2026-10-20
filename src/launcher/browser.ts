@@ -56,6 +56,8 @@ class BrowserBridge {
   /** Messages for the app while the user has control (or before the connection is open). */
   private queue: string[] = [];
   private held = false;
+  /** The app knows that the agent's commands wait for the user. */
+  private waiting = false;
   private heldTimer?: NodeJS.Timeout;
   /** Id of the client's Browser.close: its answer ends this process. */
   private closing?: number;
@@ -115,8 +117,16 @@ class BrowserBridge {
   }
 
   private flush(): void {
+    if (this.held && this.queue.some(isAgentWork)) this.setWaiting(true);
     if (this.held || this.ws?.readyState !== WebSocket.OPEN) return;
     for (const m of this.queue.splice(0)) this.ws.send(m);
+    this.setWaiting(false);
+  }
+
+  private setWaiting(waiting: boolean): void {
+    if (this.waiting === waiting) return;
+    this.waiting = waiting;
+    this.link.send({ type: 'waiting', waiting });
   }
 
   private toPipe(message: string): void {
@@ -146,6 +156,17 @@ class BrowserBridge {
     try { this.output.end(); } catch {}
     setTimeout(() => process.exit(code), 150);
   }
+}
+
+/**
+ * The MCP server also sends commands by itself, as answers to events of the
+ * page (a navigation, a new frame or worker): set-up and bookkeeping. Only
+ * other commands are the agent's work, i.e. it waits for the user.
+ */
+const BACKGROUND = /^(\w+\.(enable|disable)|Debugger\.\w+|Audits\.\w+|Autofill\.\w+|Storage\.getStorageKey|Runtime\.(runIfWaitingForDebugger|getIsolateId|releaseObject)|Target\.(setAutoAttach|setDiscoverTargets|attachToTarget|getTargets)|Page\.(getFrameTree|getResourceTree|setLifecycleEventsEnabled|addScriptToEvaluateOnNewDocument|createIsolatedWorld)|Network\.setAttachDebugStack|Log\.startViolationsReport|Emulation\.setFocusEmulationEnabled)$/;
+function isAgentWork(message: string): boolean {
+  const method = /"method":"([^"]+)"/.exec(message)?.[1];
+  return !!method && !BACKGROUND.test(method);
 }
 
 /** HABITAB_CDP_TRACE=1: every CDP message in the log (method, id, session, size), for measuring tool sequences. */

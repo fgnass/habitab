@@ -255,6 +255,8 @@ export interface Session {
   /** The tab the agent used last (it gets the session's status in the sidebar). */
   agentTab?: Tab;
   held: boolean;
+  /** The bridge holds commands of the agent: it waits for the user. */
+  waiting?: boolean;
   /** Set while the user has control automatically; then it ends by itself. */
   autoResumeAt?: number;
   resumeTimer?: NodeJS.Timeout;
@@ -405,6 +407,9 @@ export class SessionManager {
       case 'hold':
         // The bridge released by itself (time limit).
         if (!m.hold && s.held) this.setHold(s, false);
+        break;
+      case 'waiting':
+        s.waiting = !!m.waiting;
         break;
       case 'bye':
         s.endReason = m.reason;
@@ -1464,6 +1469,7 @@ export class SessionManager {
     }
     if (s.held !== hold) s.line?.send({ type: 'hold', hold });
     s.held = hold;
+    if (!hold) s.waiting = false;
     this.onChange();
   }
 

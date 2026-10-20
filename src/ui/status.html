@@ -43,7 +43,7 @@
   .d { text-align: right; color: var(--text-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
   .d.running { color: var(--accent); } .d.held { color: #b7791f; }
   .wide { grid-column: 1 / 4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
-  .wide.notice { color: var(--accent); } .wide.quiet { color: var(--text-3); } .wide.hint { color: var(--text); } .state.esc { color: var(--text-3); }
+  .wide.notice { color: var(--accent); } .wide.own { color: var(--text); } .wide.quiet { color: var(--text-3); } .wide.hint { color: var(--text); } .state.esc { color: var(--text-3); }
 
   #chip { flex: none; margin-left: -4px; display: none; align-items: center; gap: 3px; padding: 1px 6px 1px 8px; border-radius: 9px;
     background: var(--field); color: var(--text-2); font: 600 10.5px/1.4 inherit; }
@@ -51,6 +51,19 @@
   #chip:hover { background: var(--hover); color: var(--text); }
   #chip.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   #chip .icon { width: 10px; height: 10px; transform: rotate(90deg); }
+  /* The agent waits for the user: the line stands out and offers the way out. */
+  :root { --wait-text: #8a5a10; }
+  @media (prefers-color-scheme: dark) { :root { --wait-text: #f6c344; } }
+  body.waiting #line { background: color-mix(in srgb, #f6c344 22%, var(--bar)); }
+  #line .w { color: var(--wait-text); font-weight: 600; }
+  #line .gap { flex: 1; }
+  #line .act { flex: none; height: 21px; padding: 0 8px; display: flex; align-items: center; gap: 5px; border-radius: 6px; font: 600 11.5px inherit;
+    color: var(--wait-text); background: color-mix(in srgb, #f6c344 35%, transparent); }
+  #line .act:hover { background: color-mix(in srgb, #f6c344 55%, transparent); }
+  #line .act .icon { width: 12px; height: 12px; }
+  /* In the user's own tab: a quiet button, nothing waits. */
+  #line .act.own { color: var(--text-2); background: var(--field); }
+  #line .act.own:hover { color: var(--text); background: var(--hover); }
   #toggle { flex: none; width: 26px; height: 21px; padding: 0; display: grid; place-items: center; color: var(--text-2); }
   #toggle.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
   #toggle .icon { width: 14px; height: 14px; }

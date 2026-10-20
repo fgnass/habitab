@@ -55,6 +55,35 @@ function details(x) {
 
 const wide = (text, cls = '') => el('div', `wide ${cls}`, text);
 
+function button(cls, icon, text, title, onclick) {
+  const b = el('button', cls);
+  b.append(window.icon(icon), el('span', '', text));
+  b.title = title;
+  b.onclick = onclick;
+  return b;
+}
+
+/** Closes the selected session's front tab (as the state shows it at the click). */
+function closeFrontTab() {
+  const s = last?.sessions.find(x => x.id === last.selected);
+  const t = s?.tabs.find(x => x.active);
+  if (t) api.action('closeTab', s.id, t.id);
+}
+
+/**
+ * The agent wants to go on, but the user has control: the line says so and
+ * offers to go on in an own tab (the agent goes on here) or to let it go on.
+ */
+function waitingCells(x) {
+  const out = x ? callCells(x).slice(0, 2) : [];
+  if (x) out[1].prepend(el('span', 'w', 'The agent waits · '));
+  else out.push(el('span', 'w', 'The agent wants to go on and waits for you'));
+  out.push(el('div', 'gap'));
+  out.push(button('act', 'copy-plus', 'Continue in Own Tab', 'Open this page in your own tab: the agent goes on here (⇧⌘O)', () => api.action('fork')));
+  out.push(button('act', 'play', 'Let It Go On', 'Give control back to the agent (⇧⌘P)', () => api.action('hold')));
+  return out;
+}
+
 function stateText(s) {
   if (!s) return '';
   if (s.held && !s.currentTool) return 'You have control: the agent’s next tool calls wait';
@@ -93,11 +122,14 @@ function render() {
   const more = group ? group.steps.length - 1 : 0;
   const hasDetails = !!group && (more > 0 || group.steps.some(x => details(x).length));
   if (!hasDetails) pop = false;
-  const key = JSON.stringify([open, pop, state.notice, state.annotating, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held]);
+  const key = JSON.stringify([open, pop, state.notice, state.annotating, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held, s?.waiting, !!s?.nav?.own]);
   if (key === shown) return;
   shown = key;
   document.body.classList.toggle('open', open);
   document.body.classList.toggle('pop', pop);
+  // Not in the user's own tab: the agent does not work there.
+  const waiting = !!s?.waiting && !s.nav?.own && !state.annotating && !chosen && !state.notice;
+  document.body.classList.toggle('waiting', waiting);
   toggle.classList.toggle('on', open);
 
   // One line, always: the chosen change's first call, else what happens now.
@@ -107,6 +139,9 @@ function render() {
   if (state.annotating) cells = [wide((state.timelinePreview ? 'Mark an area of this earlier screenshot' : 'Mark an area of the page') + (s?.held ? ' · the agent waits' : ''), 'hint'), el('span', 'state esc', 'Esc to cancel')];
   else if (chosen) cells = lineCells(chosen.head);
   else if (state.notice) cells = [wide(state.notice, 'notice')];
+  // The user's own tab (Own Tab): say so, the agent's calls are in its tab.
+  else if (s?.nav?.own) cells = [wide('Your own tab: the agent does not use it and goes on in its tab', 'own'), button('act own', 'x', 'Close Tab', 'Close your own tab (⌘W)', closeFrontTab)];
+  else if (waiting) cells = waitingCells(current);
   else if (current) cells = lineCells(current, s.held ? 'held' : 'running');
   else if (stateText(s)) cells = [wide(stateText(s))];
   else if (latest) cells = lineCells(latest);
