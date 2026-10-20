@@ -24,6 +24,15 @@
   .step.sel .thumb { box-shadow: 0 0 0 2px var(--accent); }
   .step.error .thumb { box-shadow: 0 0 0 1.5px var(--red); }
   .step .thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+  /* Live: no picture, so it does not look like a screenshot. */
+  .live { flex: none; margin-left: 6px; height: 41px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border-radius: 6px;
+    border: 1px dashed var(--border); color: var(--text-2); font-size: 11.5px; font-weight: 600; }
+  .live:hover { background: var(--hover); }
+  .live.sel { border: 1px solid var(--accent); box-shadow: 0 0 0 1px var(--accent); color: var(--text); }
+  .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+  .live.sel i { background: var(--green); }
+  .live.running i { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
   .strip-empty { padding: 0 6px; color: var(--text-3); font-size: 11.5px; white-space: nowrap; }
 
   .t { color: var(--text-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }

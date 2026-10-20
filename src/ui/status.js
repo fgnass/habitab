@@ -1,7 +1,8 @@
 // Status line under the top bar: always one line at the same place (a notice,
 // the agent's current tool call, the session's state, its last call, or the
 // first call of the chosen change). The button (⇧⌘Y) shows the thumbnails of
-// the changes below it; an older change shows its screenshot over the page.
+// the changes below it; a change shows its screenshot over the page, the
+// Live card at the end goes back to the page itself.
 // Scripts, errors and further calls float in a panel the chip opens; nothing
 // else moves. Agent summaries, page titles, URLs and errors are only ever set
 // via textContent.
@@ -118,37 +119,37 @@ function render() {
 
   // The floating details: every call of the change, with its script and error.
   $('pop').replaceChildren(...(pop && group ? group.steps.flatMap(x => [...callCells(x), ...details(x)]) : []));
-  if (open) renderStrip(groups, chosen, chosen ?? groups[groups.length - 1]);
+  if (open) renderStrip(groups, chosen, !!current);
   report();
 }
 
-/** Thumbnails of the changes; the chosen one (or, live, the newest) is marked. */
-function renderStrip(groups, chosen, marked) {
+/** Thumbnails of the changes, then the Live card; the chosen one (or Live) is marked. */
+function renderStrip(groups, chosen, running) {
   const strip = $('strip');
   const atEnd = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 30;
   if (!groups.length) { strip.replaceChildren(el('div', 'strip-empty', 'No changes yet')); return; }
   const ids = new Set(groups.map(g => g.id));
   for (const id of cards.keys()) if (!ids.has(id)) cards.delete(id);
-  const newest = groups[groups.length - 1];
-  strip.replaceChildren(...groups.map(g => card(g, g === marked, g === newest, chosen)));
+  live.className = 'live' + (chosen ? '' : ' sel') + (running ? ' running' : '');
+  strip.replaceChildren(...groups.map(g => card(g, g === chosen)), live);
   if (atEnd && !chosen) strip.scrollLeft = strip.scrollWidth;
   loadThumbs(groups);
 }
 
-function card(g, sel, newest, chosen) {
+function card(g, sel) {
   let c = cards.get(g.id);
   if (!c) {
     c = el('div', 'step');
     c.appendChild(el('div', 'thumb'));
     cards.set(g.id, c);
   }
-  // The newest change is the live page; an older one opens its screenshot (again: back to live).
-  c.onclick = () => api.action('timelinePreview', newest || chosen?.id === g.id ? null : g.id);
+  // A change opens its screenshot (again: back to live).
+  c.onclick = () => api.action('timelinePreview', sel ? null : g.id);
   c.className = 'step' + (sel ? ' sel' : '') + (g.errors.length ? ' error' : '');
   c.title = [
     `${toolText(g.head.tool, g.head.summary)} · ${time(g.head.start)}${g.errors.length ? ` · ${g.errors.length} failed` : ''}`, g.title, g.url,
     g.steps.length > 1 ? `Then ${calls(g.steps.length - 1)} without a further change` : '',
-    newest ? 'The live page' : 'Click to see this screenshot',
+    'Click to see this screenshot',
   ].filter(Boolean).join('\n');
   const t = c.firstChild;
   const url = g.shot && thumbs.get(`${session}/${g.shot}`);
@@ -160,6 +161,12 @@ function card(g, sel, newest, chosen) {
   }
   return c;
 }
+
+// Live: the page itself, not a picture of it. It pulses while the agent works.
+const live = el('div', 'live');
+live.append(el('i'), el('span', '', 'Live'));
+live.title = 'The live page';
+live.onclick = () => api.action('timelinePreview', null);
 
 /** Loads the small screenshots that are not cached yet, in one request. */
 async function loadThumbs(groups) {
@@ -188,9 +195,10 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     const s = state.sessions.find(x => x.id === state.selected);
     const groups = timelineGroups(s?.timeline ?? []);
-    const i = state.timelinePreview ? groups.findIndex(g => g.id === state.timelineStep) : groups.length - 1;
-    const n = groups[i + (e.key === 'ArrowLeft' ? -1 : 1)];
-    if (n) api.action('timelinePreview', n === groups[groups.length - 1] ? null : n.id);
+    // groups.length: Live, after the newest change.
+    const i = state.timelinePreview ? groups.findIndex(g => g.id === state.timelineStep) : groups.length;
+    const n = i + (e.key === 'ArrowLeft' ? -1 : 1);
+    if (n >= 0 && n <= groups.length) api.action('timelinePreview', groups[n]?.id ?? null);
   }
 });
 // Vertical wheel scrolls the thumbnails sideways.

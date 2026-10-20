@@ -87,7 +87,7 @@ let findKeyHandler: ((e: Electron.Event, input: Electron.Input) => void) | undef
 const FIND_W = 340, FIND_H = 40;
 /** The status line is open (the timeline); with an older change chosen, its screenshot lies over the page. */
 let timelineOpen = false, timelinePreview = false;
-/** The change the user chose in the timeline (its first step's id); null: the newest one, live. */
+/** The change the user chose in the timeline (its first step's id); null: live, the page itself. */
 let timelineStep: number | null = null;
 /**
  * What the preview view shows, as it reports it ('timelineShown'). Until it
