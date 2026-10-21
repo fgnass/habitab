@@ -615,6 +615,29 @@ check((await viewport())?.[0] === 768 && !nav.emulation.fillWidth && nav.emulati
 await control(`draghandle ${sb.id} 50`);
 await sleep(500);
 check((await viewport())?.[0] === 868, 'dragging the right handle changes the width', JSON.stringify(await viewport()));
+// Mouse or touch: touch makes a mobile device whose pointer is coarse and cannot hover; the mouse sends touch events
+{
+  const input = async () => JSON.parse((await b.tool('evaluate_script', { pageId: pb, function: `() => JSON.stringify({ coarse: matchMedia('(pointer: coarse)').matches, hover: matchMedia('(hover: hover)').matches, points: navigator.maxTouchPoints, ontouch: 'ontouchstart' in window, events: window.inputLog ?? [] })` })).text.match(/"(\{.*\})"/)?.[1].replace(/\\"/g, '"') ?? '{}');
+  const listen = () => b.tool('evaluate_script', { pageId: pb, function: `() => { window.inputLog = []; for (const t of ['touchstart', 'mousedown']) addEventListener(t, e => inputLog.push(e.type)); return 1; }` });
+  await control(`ui responsive document.getElementById('touch').click()`);
+  await sleep(500);
+  await listen();
+  await control(`hold ${sb.id} off`);
+  await control(`userclick ${sb.id} 30 30`);
+  await sleep(300);
+  await control(`hold ${sb.id} off`);
+  const touch = await input();
+  const on = (await uiEval('responsive', `document.getElementById('touch').className`))?.result;
+  check(touch.coarse && !touch.hover && touch.points > 0 && touch.events[0] === 'touchstart' && on === 'on', 'touch: coarse pointer without hover, the mouse sends touch events', JSON.stringify({ touch, on }));
+  await control(`ui responsive document.getElementById('mouse').click()`);
+  await sleep(500);
+  await listen();
+  await control(`userclick ${sb.id} 30 30`);
+  await sleep(300);
+  await control(`hold ${sb.id} off`);
+  const mouse = await input();
+  check(!mouse.coarse && mouse.hover && mouse.points === 0 && !mouse.events.includes('touchstart') && (await state()).sessions.find(s => s.id === sb.id).nav.emulation.width === 868, 'mouse: fine pointer with hover again, the size stays', JSON.stringify(mouse));
+}
 await control(`action ${sb.id} emulate {"preset":"iphone-se","width":375,"height":667,"dpr":2,"mobile":true}`);
 await sleep(500);
 let vpa = await viewport();

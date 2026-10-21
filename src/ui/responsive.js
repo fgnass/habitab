@@ -28,6 +28,8 @@ api.onState(state => {
     $(id).classList.toggle('auto', !!fill);
     $(id).title = fill ? `${id === 'w' ? 'Width' : 'Height'}: fills the free space (type a value or drag the handle to fix it)` : id === 'w' ? 'Width' : 'Height';
   }
+  $('mouse').classList.toggle('on', !e.mobile);
+  $('touch').classList.toggle('on', !!e.mobile);
   for (const b of $('bps').children) b.classList.toggle('on', b.dataset.width ? !e.fillWidth && e.width === Number(b.dataset.width) : !!e.fillWidth);
   // The page is shown smaller than its viewport: say by how much.
   const scale = e.zoom === 'fit' ? e.scale : e.zoom;
@@ -56,4 +58,6 @@ for (const id of ['w', 'h']) {
     }
   });
 }
+$('mouse').onclick = () => emulate({ mobile: false });
+$('touch').onclick = () => emulate({ mobile: true });
 $('close').onclick = () => api.action('responsive');

@@ -15,7 +15,8 @@
   .hidden { display: none !important; }
   /* A dimension that follows the free space: shown, but quiet. */
   input.auto { color: var(--text-3); }
-  /* Width presets (phone, common breakpoints, full): set the width, the height keeps filling. */
+  /* Width presets (phone, common breakpoints, full): set the width, the height keeps filling.
+     The same look for the input type (mouse or touch). */
   .bps { display: flex; gap: 1px; padding: 2px; border-radius: 8px; background: var(--field); }
   .bps button { height: 22px; padding: 0 8px; border-radius: 6px; color: var(--text-2); font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
   .bps button:hover:not(.on) { background: color-mix(in srgb, var(--text) 6%, transparent); }
@@ -30,6 +31,8 @@
 <span id="bps" class="bps"></span>
 <span class="sep size"></span>
 <span class="size"><input id="w" title="Width" inputmode="numeric"> <span class="x">×</span> <input id="h" title="Height" inputmode="numeric"></span>
+<span class="sep"></span>
+<span id="input" class="bps"><button id="mouse" title="Mouse: a desktop with a pointer that can hover"><span data-icon="mouse-pointer-2"></span></button><button id="touch" title="Touch: a mobile device, the mouse sends touch events"><span data-icon="pointer"></span></button></span>
 <span id="zoom" class="note hidden"></span>
 <span id="by" class="note hidden">· set by the agent</span>
 <button id="close" title="Leave responsive mode (⇧⌘M)"><span data-icon="x"></span></button>
