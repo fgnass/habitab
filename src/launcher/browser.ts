@@ -53,7 +53,7 @@ class BrowserBridge {
   private output = new net.Socket({ fd: 4, readable: false, writable: true });
   private ws?: WebSocket;
   private buffer: Buffer = Buffer.alloc(0);
-  /** Messages for the app while the user has control (or before the connection is open). */
+  /** Messages for the app: the agent's work while the user has control, all before the connection is open. */
   private queue: string[] = [];
   private held = false;
   /** The app knows that the agent's commands wait for the user. */
@@ -116,11 +116,20 @@ class BrowserBridge {
     }
   }
 
+  /**
+   * While the user has control, only the agent's work waits. Set-up commands
+   * go on: a tab that the user's click opened waits for the server's
+   * Runtime.runIfWaitingForDebugger before it loads its page.
+   */
   private flush(): void {
-    if (this.held && this.queue.some(isAgentWork)) this.setWaiting(true);
-    if (this.held || this.ws?.readyState !== WebSocket.OPEN) return;
-    for (const m of this.queue.splice(0)) this.ws.send(m);
-    this.setWaiting(false);
+    const open = this.ws?.readyState === WebSocket.OPEN;
+    const later: string[] = [];
+    for (const m of this.queue) {
+      if (open && !(this.held && isAgentWork(m))) this.ws!.send(m);
+      else later.push(m);
+    }
+    this.queue = later;
+    this.setWaiting(this.held && later.some(isAgentWork));
   }
 
   private setWaiting(waiting: boolean): void {

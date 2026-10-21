@@ -102,6 +102,8 @@ const page = http.createServer((req, res) => {
   // Web Share: a full-page button shares title, text, a relative URL and a file; the result lands in window.r.
   if (req.url === '/share') return res.end(`<title>Share</title><script>window.early = typeof navigator.share</script>
     <button style="position:fixed;inset:0" onclick="navigator.share({ title: 'T', text: 'Hello', url: '/x', files: [new File(['hi'], 'a.txt', { type: 'text/plain' })] }).then(() => window.r = 'resolved', e => window.r = e.name)">Share</button>`);
+  // A full-page link that opens a new tab.
+  if (req.url === '/blank-link') return res.end('<title>Blank link</title><a target=_blank href="/opened" style="position:fixed;inset:0">Open</a>');
   if (req.url === '/headers') return res.end(`sent-ua=${req.headers['user-agent']} | sent-ch=${req.headers['sec-ch-ua']}`);
   res.end(`<!doctype html><title>Page ${req.url}</title><h1>${req.url}</h1>
     <button id=p onclick="window.open('/popup','_blank')">Popup</button>
@@ -277,6 +279,16 @@ await control(`userkey ${sb.id}`);
 await sleep(300);
 check((await state()).sessions.find(s => s.id === sb.id).held, 'a key press after a click takes control');
 await control(`hold ${sb.id} off`);
+
+// A user's click on a target=_blank link: the new tab loads although the agent waits
+await b.tool('navigate_page', { pageId: pb, url: `${base}/blank-link` });
+await control(`userclick ${sb.id} 20 20`);
+await sleep(1000);
+const opened = (await state()).sessions.find(s => s.id === sb.id);
+check(opened.held && opened.tabs.find(t => t.active)?.url.endsWith('/opened'), 'a link the user opens in a new tab loads while the agent waits', JSON.stringify({ held: opened.held, tabs: opened.tabs.map(t => t.url) }));
+await control(`closetab ${sb.id}`);
+await control(`hold ${sb.id} off`);
+await b.tool('navigate_page', { pageId: pb, url: `${base}/beta` });
 
 // Own tab: the user goes on in a copy of the page, the agent in its tab
 const agentPage = await pageId(b);
