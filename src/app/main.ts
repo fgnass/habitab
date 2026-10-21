@@ -358,20 +358,9 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'findClose': return closeFind();
     case 'annotateMark': return s?.active && annotateMark(s.active, args[0]);
     case 'annotateSubmit': return s?.active && annotateSubmit(s, s.active, args[0]);
-    // Console errors: the badge opens the DevTools console of the tab (optionally another session's tab first);
-    // its context menu sends them to the agent.
-    case 'problems': {
-      if (args[0]) select(args[0], args[1]);
-      const x = selected();
-      if (x?.active) manager.showConsole(x, x.active);
-      return;
-    }
-    case 'problemsMenu': {
-      const x = args[0] ? manager.sessions.get(args[0]) : selected();
-      const tab = args[1] ? x?.tabs.find(t => t.id === args[1]) : x?.active;
-      if (x && tab) problemsMenu(x, tab, args[2], args[3]);
-      return;
-    }
+    // Console errors of the front tab: the button opens the DevTools console; its context menu sends them to the agent.
+    case 'problems': return s?.active && manager.showConsole(s, s.active);
+    case 'problemsMenu': return s?.active && problemsMenu(s, s.active, args[0], args[1]);
     case 'problemsSend': return s?.active && sendProblems(s, s.active, args[0]);
     case 'problemsClear': { if (s?.active) manager.clearProblems(s.active); return; }
     // Timeline: open or close, the large preview, screenshots of steps, open a step's URL.

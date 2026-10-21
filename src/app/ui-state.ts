@@ -22,7 +22,6 @@ export function uiState(m: SessionManager) {
         id: t.id, title: wc.getTitle(), url, loading: wc.isLoading(), active: t === s.active, inactive: !isActiveTab(s, t), debuggerPaused: !!t.debuggerPaused, busy: !!t.busy,
         isBlank: !url || url === 'about:blank', fixedSize: t.fixedSize ?? null, targetUrl: t.targetUrl ?? '',
         /** Console errors the user has not seen (badge); repeated ones count once per entry. */
-        problems: newProblems(s, t),
         own: !!t.own,
       };
     });

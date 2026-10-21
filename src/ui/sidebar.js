@@ -38,23 +38,9 @@ function thumbView(s, t) {
   const box = el('div', 'thumb');
   const img = thumbs.get(t.id);
   if (img) box.appendChild(img);
-  // Thumbnails only: the error count sits on the thumbnail (full width: see problemsView).
-  if (t.problems && state.sidebar === 'compact') box.appendChild(problemsView(s, t, 'badge'));
-  // Likewise the mark of the user's own tab.
+  // Thumbnails only: the mark of the user's own tab sits on the thumbnail.
   if (t.own && state.sidebar === 'compact') box.appendChild(el('span', 'own badge')).appendChild(icon('user'));
   return box;
-}
-
-/** Console errors of a tab: "3 errors" (or the count only). A click opens the console, the context menu sends them. */
-function problemsView(s, t, cls) {
-  const n = t.problems;
-  const b = el('span', 'problems ' + cls);
-  if (cls === 'badge') b.textContent = n > 99 ? '99+' : String(n);
-  else b.append(icon('circle-alert'), el('span', '', `${n} error${n > 1 ? 's' : ''}`));
-  b.title = `This page has ${n} console error${n > 1 ? 's' : ''}. Click to open the console; right-click to send them to the agent.`;
-  b.onclick = e => { e.stopPropagation(); api.action('problems', s.id, t.id); };
-  b.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); api.action('problemsMenu', s.id, t.id, Math.round(e.clientX), Math.round(e.clientY)); };
-  return b;
 }
 
 function statusText(s) {
@@ -85,7 +71,6 @@ function cardView(s, t) {
   // Only what belongs to the tab; the session's things are in its header.
   const meta = el('div', 'meta');
   meta.appendChild(el('span', 'host ellipsis', t.isBlank ? '' : host(t.url)));
-  if (t.problems) meta.appendChild(problemsView(s, t, 'chip'));
   if (t.own) meta.appendChild(titled(icon('user'), 'Your own tab: the agent goes on while you use it'));
   if (t.debuggerPaused) meta.appendChild(titled(icon('bug-off'), "Debugger paused: the agent's debugger is off in this tab until the agent works in it again"));
   info.appendChild(meta);

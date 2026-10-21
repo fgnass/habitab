@@ -88,5 +88,5 @@ $('hold').onclick = () => api.action('hold');
 $('fork').onclick = () => api.action('fork');
 $('debugger').onclick = () => api.action('debugger');
 $('problems').onclick = () => api.action('problems');
-$('problems').oncontextmenu = e => { e.preventDefault(); api.action('problemsMenu', null, null, Math.round(e.clientX), Math.round(e.clientY)); };
+$('problems').oncontextmenu = e => { e.preventDefault(); api.action('problemsMenu', Math.round(e.clientX), Math.round(e.clientY)); };
 $('sizeReset').onclick = () => api.action('resetSize');

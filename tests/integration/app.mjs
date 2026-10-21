@@ -329,7 +329,7 @@ for (let i = 0; i < 30; i++) { await sleep(100); tb = (await state()).sessions.f
 const probs = tb.nav?.problems ?? [];
 check(probs.length === 3 && probs.find(p => p.text.includes('Oops twice'))?.count === 2 && probs.some(p => p.text.includes('Boom')) && probs.some(p => /500/.test(p.text) && p.source?.includes('/api/fail')),
   'problems: console errors (repeats counted), uncaught exceptions and failed requests as the console reports them', JSON.stringify(probs.map(p => [p.text.slice(0, 40), p.source, p.count])));
-check(tb.tabs.find(t => t.active)?.problems === 3, 'problems: the tab has an error count for its badge');
+check(tb.nav?.newProblems === 3, 'problems: the front tab has an error count for the bar');
 const askedP = nextNote();
 await control(`action ${sb.id} problemsSend [${probs.find(p => p.text.includes('Boom')).id}]`);
 const answerP = await askedP;
@@ -486,7 +486,7 @@ await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/beta` });
 check(!(await state()).sessions.find(s => s.id === sb.id).nav.problems.length, 'problems: a new page starts without problems');
 // Errors count as seen while the tab's DevTools are open; after closing them only new ones count
 {
-  const badge = async () => { await sleep(400); return (await state()).sessions.find(s => s.id === sb.id).tabs.find(t => t.active)?.problems; };
+  const badge = async () => { await sleep(400); return (await state()).sessions.find(s => s.id === sb.id).nav?.newProblems; };
   const devtoolsOpen = async () => (await state()).sessions.find(s => s.id === sb.id).devtools;
   const wasOpen = await devtoolsOpen();
   if (!wasOpen) await control(`devtools ${sb.id}`);
