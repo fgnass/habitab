@@ -8,14 +8,21 @@
   #shade { position: fixed; inset: 0; background: rgba(0, 0, 0, .18); }
   #rect { position: fixed; display: none; border: 2px solid var(--accent); border-radius: 3px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .28); background: transparent; }
   body.has-rect #shade { display: none; }
+  /* Kept notes: their area and number (a click on it opens the note again). */
+  .note { position: fixed; border: 2px solid var(--accent); border-radius: 3px; background: color-mix(in srgb, var(--accent) 8%, transparent); pointer-events: none; }
+  .note .num { position: absolute; top: -11px; left: -11px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 600; line-height: 22px; text-align: center; cursor: pointer; pointer-events: auto; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  .note .num:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
   #form { position: fixed; display: none; width: 460px; padding: 14px; border-radius: 12px; background: var(--page); cursor: default; font-size: 13.5px;
     box-shadow: 0 10px 32px rgba(0,0,0,.28), 0 0 0 .5px var(--border); }
   #form textarea { width: 100%; min-height: 96px; resize: vertical; border: 0; outline: 0; border-radius: 8px; padding: 9px 10px; background: var(--field);
     font: inherit; font-size: 14px; line-height: 1.4; color: inherit; -webkit-user-select: text; user-select: text; }
   #form textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
   #form .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-  #form .row .grow { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-3); }
-  #target { display: block; }
+  #form .row .grow { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The key of a button, quiet beside its label. */
+  #form kbd { font: inherit; font-size: 12px; opacity: .55; margin-left: 2px; }
+  #send kbd { opacity: .75; margin-left: 0; }
   #form button { padding: 6px 12px; font-size: 13px; }
   #send { background: var(--accent); color: #fff; display: flex; gap: 6px; align-items: center; }
   #send:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
@@ -36,17 +43,19 @@
 </style>
 <div id="shade"></div>
 <div id="rect"></div>
+<div id="notes"></div>
 <div id="form">
-  <textarea id="text" placeholder="What about this area?"></textarea>
+  <textarea id="text" placeholder="What about this area?" title="⇧↵ new line"></textarea>
   <div id="dictation">
     <button id="mic" title="Hold to talk (or hold Space in the field)"><span data-icon="mic" class="small"></span>Hold to talk</button>
     <span id="dictState"><span id="meter"><i></i></span><span id="dictText"></span></span>
     <select id="lang" title="Language of dictation"></select>
   </div>
   <div class="row">
-    <span class="grow"><span id="target"></span><span>↵ to send · ⇧↵ new line</span></span>
+    <span class="grow" id="target"></span>
     <button id="cancel">Cancel</button>
-    <button id="send"><span data-icon="send" class="small"></span><span id="sendText">Send</span></button>
+    <button id="add" title="Keep this note and mark another area: all go out together">Add <kbd>⌘↵</kbd></button>
+    <button id="send" title="Send all notes (⇧↵ makes a new line)"><span data-icon="send" class="small"></span><span id="sendText">Send</span><kbd>↵</kbd></button>
   </div>
 </div>
 <script src="icons.js"></script>

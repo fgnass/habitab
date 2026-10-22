@@ -147,9 +147,9 @@ export class CodexAppServer {
   }
 
   /** Feedback as a user message: into the running turn, or as a new turn when the thread is idle. */
-  async push(threadId: string, text: string, imagePath?: string): Promise<boolean> {
+  async push(threadId: string, text: string, imagePaths: string[] = []): Promise<boolean> {
     if (!(await this.connect())) return false;
-    const input = [{ type: 'text', text }, ...(imagePath ? [{ type: 'localImage', path: imagePath }] : [])];
+    const input = [{ type: 'text', text }, ...imagePaths.map(path => ({ type: 'localImage', path }))];
     const read = await this.request('thread/read', { threadId, includeTurns: true });
     const thread = read?.result?.thread;
     const active = (thread?.status?.type ?? this.status.get(threadId)) === 'active';

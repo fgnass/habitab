@@ -89,6 +89,10 @@ Habitab.app (Electron)
      timeline folder, through the inbox socket; Codex: as an image input,
      through the app-server daemon). Without a channel (other clients) the
      note goes to the clipboard
+   • several notes at once: Add (⌘↵), or a new drag after a comment, keeps
+     the note on the page with its number (a click on it opens it again);
+     Send (↵, also in the status line) sends all as one numbered note with
+     one image per area. The clipboard gets the part of the page with all areas
    • dictation (macOS): hold the microphone button (or Space in the comment
      field) and talk; let go and the words stand in the field, a meter shows
      what the microphone hears. Recognition runs on the Mac (Apple's Speech

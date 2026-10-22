@@ -122,7 +122,7 @@ function render() {
   const more = group ? group.steps.length - 1 : 0;
   const hasDetails = !!group && (more > 0 || group.steps.some(x => details(x).length));
   if (!hasDetails) pop = false;
-  const key = JSON.stringify([open, pop, state.notice, state.annotating, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held, s?.waiting, !!s?.nav?.own]);
+  const key = JSON.stringify([open, pop, state.notice, state.annotating, state.annotateKept, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held, s?.waiting, !!s?.nav?.own]);
   if (key === shown) return;
   shown = key;
   document.body.classList.toggle('open', open);
@@ -136,7 +136,10 @@ function render() {
   // No durations here: they are for looking back (details, screenshot).
   let cells;
   // Marking mode: how it works, in place of the agent's call.
-  if (state.annotating) cells = [wide((state.timelinePreview ? 'Mark an area of this earlier screenshot' : 'Mark an area of the page') + (s?.held ? ' · the agent waits' : ''), 'hint'), el('span', 'state esc', 'Esc to cancel')];
+  // With kept notes: the next area, or send them all.
+  if (state.annotating && state.annotateKept) cells = [wide(`${state.annotateKept} marked · mark another area, or send them together` + (s?.held ? ' · the agent waits' : ''), 'hint'),
+    button('act own', 'send', `Send ${state.annotateKept}`, 'Send all notes as one message (↵)', () => api.action('annotateSend')), el('span', 'state esc', 'Esc discards all')];
+  else if (state.annotating) cells = [wide((state.timelinePreview ? 'Mark an area of this earlier screenshot' : 'Mark an area of the page') + (s?.held ? ' · the agent waits' : ''), 'hint'), el('span', 'state esc', 'Esc to cancel')];
   else if (chosen) cells = lineCells(chosen.head);
   else if (state.notice) cells = [wide(state.notice, 'notice')];
   // The user's own tab (Own Tab): say so, the agent's calls are in its tab.

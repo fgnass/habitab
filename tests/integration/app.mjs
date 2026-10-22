@@ -684,6 +684,39 @@ await sleep(400);
   await control(`ui annotator (() => { document.getElementById('text').value = 'Responsive mark'; document.getElementById('send').click(); return 1; })()`);
   const marked = await markNote;
   check(marked.text.includes('Responsive mark') && marked.text.includes('120 × 80 px at 10, 10') && marked.text.includes('mark-me'), 'responsive mode: the mark arrives in page coordinates, with the elements as they were when marked', marked.text.replace(/\n/g, ' | ').slice(0, 300));
+  // Several notes at once: Add keeps a note, a new drag keeps one with a comment; Send sends all as one message, one image each.
+  const drag = async (x1, y1, x2, y2) => {
+    await control(`usermouse annotator down ${at(x1, y1)}`);
+    await control(`usermouse annotator move ${at(x2, y2)}`);
+    await control(`usermouse annotator up ${at(x2, y2)}`);
+    await sleep(200);
+  };
+  await control(`action ${sb.id} annotate true`);
+  await sleep(300);
+  await drag(10, 10, 60, 40);
+  await control(`ui annotator (() => { document.getElementById('text').value = 'First'; document.getElementById('add').click(); return 1; })()`);
+  await drag(70, 10, 120, 40);
+  await control(`ui annotator (() => { document.getElementById('text').value = 'Second'; return 1; })()`);
+  await drag(10, 50, 60, 80);
+  const shown = await uiEval('annotator', `document.querySelectorAll('.note').length + '|' + document.getElementById('sendText').textContent`);
+  check((await state()).annotateKept === 2 && shown?.result === '2|Send 3', 'several notes: kept notes show with their numbers, Send counts them all', `${(await state()).annotateKept} ${shown?.result}`);
+  const multi = nextNote();
+  await control(`ui annotator (() => { document.getElementById('text').value = 'Third'; document.getElementById('send').click(); return 1; })()`);
+  const many = await multi;
+  const pngs = many.text.match(/\/\S+feedback-\d+-\d\.png/g) ?? [];
+  check(/marked 3 areas/.test(many.text) && /1\. The user says: "First"\n.*Marked: .*50 × 30 px at 10, 10/.test(many.text) && /2\. The user says: "Second"/.test(many.text) && /3\. The user says: "Third"/.test(many.text)
+    && pngs.length === 3 && pngs.every(f => fs.existsSync(f)) && (await state()).annotating === false,
+    'several notes go out as one message, numbered, with one image each', many.text.replace(/\n/g, ' | ').slice(0, 400));
+  // The status line's Send: the kept notes go out without the form.
+  await control(`action ${sb.id} annotate true`);
+  await sleep(300);
+  await drag(10, 10, 60, 40);
+  await control(`ui annotator (() => { document.getElementById('text').value = 'Only one'; document.getElementById('add').click(); return 1; })()`);
+  await sleep(200);
+  const viaStatus = nextNote();
+  await control(`action ${sb.id} annotateSend`);
+  const one = await viaStatus;
+  check(one.text.includes('"Only one"') && !/areas/.test(one.text), 'the status line sends the kept notes', one.text.replace(/\n/g, ' | ').slice(0, 200));
   await control(`action ${sb.id} annotate false`);
 }
 await control(`action ${sb.id} responsive`);

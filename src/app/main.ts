@@ -75,8 +75,12 @@ let statusHeight = STATUSBAR;
 let annotating = false;
 /** While the user marks, the agent's commands wait: the session held for it, and the control it had before (put back after). */
 let annotateHold: { s: Session; before: 'none' | 'auto' | 'manual' } | null = null;
-/** What the user marked, taken at once: the page may change before the comment is written. */
-let mark: { tab: Tab; rect: Electron.Rectangle; done: Promise<Mark> } | null = null;
+/** What the user marked, taken at once (by the overlay's id of the mark): the page may change before the comments are written. */
+const marks = new Map<number, { tab: Tab; rect: Electron.Rectangle; done: Promise<Mark> }>();
+/** Marks the user kept to send together with the next one (the overlay reports how many). */
+let annotateKept = 0;
+/** A marked area with the user's comment, as the overlay sends it (`id`: its mark). */
+type Note = { id?: number; rect: Electron.Rectangle; text: string; dictated?: boolean };
 type Mark = { image: Electron.NativeImage; url: string; css: Electron.Rectangle; page: { title: string; primary: string[]; inside: string[] } };
 /** The page's frame in the overlay, as last sent to it (JSON). */
 let annotateFrame = '';
@@ -226,7 +230,7 @@ function layout(): void {
   // Marking mode: the overlay covers the page area (in responsive mode also the
   // room around the viewport, so the comment form is not cut off there), or that
   // screenshot. The user marks only inside the page: its frame in the overlay.
-  if (annotating && !sel) { annotating = false; mark = null; releaseMarkHold(); }
+  if (annotating && !sel) { annotating = false; clearMarks(); releaseMarkHold(); }
   annotator.setVisible(annotating);
   if (annotating && sel) {
     // Another session came to the front while marking: now its agent waits.
@@ -280,7 +284,7 @@ function publish(): void {
   publishTimer = setTimeout(() => {
     publishTimer = undefined;
     if (quitting || win.isDestroyed()) return;
-    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, findText: findOpen ? findText : null, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
+    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, annotateKept, findText: findOpen ? findText : null, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
     for (const v of [sidebar, topbar, empty, responsive, annotator, status, timeline, link, find]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
     updateMenu();
     manager.saveSoon();
@@ -357,6 +361,10 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'findStep': return void (findTab && runFind({ forward: args[0] !== false, next: true }));
     case 'findClose': return closeFind();
     case 'annotateMark': return s?.active && annotateMark(s.active, args[0]);
+    case 'annotateDrop': return void marks.delete(args[0]);
+    case 'annotateKept': annotateKept = args[0]; return publish();
+    // The status line's Send: the overlay sends its marks.
+    case 'annotateSend': return void (annotating && !annotator.webContents.isDestroyed() && annotator.webContents.send('annotate-send'));
     case 'annotateSubmit': return s?.active && annotateSubmit(s, s.active, args[0]);
     // Console errors of the front tab: the button opens the DevTools console; its context menu sends them to the agent.
     case 'problems': return s?.active && manager.showConsole(s, s.active);
@@ -426,10 +434,15 @@ function setAnnotating(on: boolean, keepHold = false): void {
   const s = selected();
   annotating = on && !!s?.active;
   if (annotating && s) holdForMark(s);
-  else { mark = null; if (!keepHold) releaseMarkHold(); }
+  else { clearMarks(); if (!keepHold) releaseMarkHold(); }
   layout();
   publish();
   if (annotating) focusView(annotator);
+}
+
+function clearMarks(): void {
+  marks.clear();
+  annotateKept = 0;
 }
 
 /**
@@ -804,11 +817,11 @@ const DESCRIBE_AREA = `(r => {
  * the picture, the URL and the elements are taken now, not when the comment
  * is sent, so the feedback shows what the user saw.
  */
-function annotateMark(tab: Tab, rect: Electron.Rectangle): void {
+function annotateMark(tab: Tab, m: { id: number; rect: Electron.Rectangle }): void {
   if (timelinePreview) return; // An earlier screenshot: it does not change.
-  const done = captureMark(tab, rect);
+  const done = captureMark(tab, m.rect);
   done.catch(() => {}); // A mark that is cancelled is never awaited.
-  mark = { tab, rect, done };
+  marks.set(m.id, { tab, rect: m.rect, done });
 }
 
 async function captureMark(tab: Tab, r: Electron.Rectangle): Promise<Mark> {
@@ -823,68 +836,94 @@ async function captureMark(tab: Tab, r: Electron.Rectangle): Promise<Mark> {
   return { image, url, css, page };
 }
 
-/** The user marked an area: to the waiting agent, otherwise to the clipboard. */
-async function annotateSubmit(s: Session, tab: Tab, data: { rect: Electron.Rectangle; text: string; dictated?: boolean }): Promise<void> {
-  if (timelinePreview && timelineStep !== null) return annotateScreenshot(s, timelineStep, data);
-  const r = data.rect;
-  // The mark taken when the drag ended; without one (a direct call) the page is taken now.
-  const kept = mark && mark.tab === tab && mark.rect.x === r.x && mark.rect.y === r.y && mark.rect.width === r.width && mark.rect.height === r.height ? mark.done : null;
+const sameRect = (a: Electron.Rectangle, b: Electron.Rectangle) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+/** The smallest rectangle that contains all of them. */
+function union(rects: Electron.Rectangle[]): Electron.Rectangle {
+  const x = Math.min(...rects.map(r => r.x)), y = Math.min(...rects.map(r => r.y));
+  return { x, y, width: Math.max(...rects.map(r => r.x + r.width)) - x, height: Math.max(...rects.map(r => r.y + r.height)) - y };
+}
+const said = (n: Note) => n.text ? `The user says${n.dictated ? ' (dictated: a word may be misheard)' : ''}: "${n.text}"` : 'The user marked an area without a comment.';
+/** Several marks go out as one message: the agent reads them together. */
+const together = (n: number, of: string) => `The user marked ${n} areas of ${of} at once (numbered in the order they were marked); they may belong together.`;
+
+/** The user marked one or more areas: to the waiting agent, otherwise to the clipboard. */
+async function annotateSubmit(s: Session, tab: Tab, data: Note | { notes: Note[] }): Promise<void> {
+  const notes = 'notes' in data ? data.notes : [data];
+  if (!notes.length) return;
+  if (timelinePreview && timelineStep !== null) return annotateScreenshot(s, timelineStep, notes);
+  // The marks taken when the drags ended; without one (a direct call) the page is taken now.
+  const kept = notes.map(n => { const m = n.id !== undefined ? marks.get(n.id) : undefined; return m && m.tab === tab && sameRect(m.rect, n.rect) ? m.done : null; });
   setAnnotating(false, true);
   try {
-    const { image, url, css, page } = await (kept ?? captureMark(tab, r));
-    const where = `${Math.round(css.width)} × ${Math.round(css.height)} px at ${Math.round(css.x)}, ${Math.round(css.y)}`;
-    const text = [
-      data.text ? `The user says${data.dictated ? ' (dictated: a word may be misheard)' : ''}: "${data.text}"` : 'The user marked an area without a comment.',
-      `Page: ${url}${page.title ? ` ("${page.title}")` : ''}`,
-      `Marked: ${page.primary.length ? page.primary.join(', ') + ' ' : ''}(${where}${page.inside.length ? `, inside ${page.inside.join(' > ')}` : ''})`,
-    ].join('\n');
-    await deliverFeedback(s, { text, comment: data.text, url, image });
+    const shots = await Promise.all(notes.map((n, i) => kept[i] ?? captureMark(tab, n.rect)));
+    const { url, page } = shots[0];
+    const marked = ({ css, page }: Mark) => {
+      const where = `${Math.round(css.width)} × ${Math.round(css.height)} px at ${Math.round(css.x)}, ${Math.round(css.y)}`;
+      return `Marked: ${page.primary.length ? page.primary.join(', ') + ' ' : ''}(${where}${page.inside.length ? `, inside ${page.inside.join(' > ')}` : ''})`;
+    };
+    const pageLine = `Page: ${url}${page.title ? ` ("${page.title}")` : ''}`;
+    const text = (notes.length === 1
+      ? [said(notes[0]), pageLine, marked(shots[0])]
+      : [together(notes.length, 'the page'), pageLine, ...notes.flatMap((n, i) => [`${i + 1}. ${said(n)}`, `   ${marked(shots[i])}`])]
+    ).join('\n');
+    // For the clipboard (one image only): the part of the page with all marks, taken now (the agent still waits).
+    const overview = () => tab.view.webContents.capturePage(union(notes.map(n => n.rect)));
+    await deliverFeedback(s, { text, comment: notes.map(n => n.text).filter(Boolean).join('\n'), url, images: shots.map(x => x.image), overview });
   } finally { releaseMarkHold(); }
 }
 
 /**
- * The user marked an area of an earlier screenshot (timeline): the area is cut
+ * The user marked areas of an earlier screenshot (timeline): the areas are cut
  * out of the stored screenshot, and the agent learns that it is about an
  * earlier state of the page, not the live one. An image has no elements.
  */
-async function annotateScreenshot(s: Session, stepId: number, data: { rect: Electron.Rectangle; text: string; dictated?: boolean }): Promise<void> {
+async function annotateScreenshot(s: Session, stepId: number, notes: Note[]): Promise<void> {
   setAnnotating(false, true);
-  try { await annotateScreenshotSend(s, stepId, data); } finally { releaseMarkHold(); }
+  try { await annotateScreenshotSend(s, stepId, notes); } finally { releaseMarkHold(); }
 }
-async function annotateScreenshotSend(s: Session, stepId: number, data: { rect: Electron.Rectangle; text: string; dictated?: boolean }): Promise<void> {
+async function annotateScreenshotSend(s: Session, stepId: number, notes: Note[]): Promise<void> {
   const step = s.timeline.find(x => x.id === stepId);
   const file = manager.stepShotFile(s, stepId);
   const full = file ? nativeImage.createFromPath(file) : undefined;
   if (!step || !full || full.isEmpty()) return showNotice('This screenshot is no longer kept');
-  // Where the screenshot lies in its view; the marked rectangle is in the same coordinates.
+  // Where the screenshot lies in its view; the marked rectangles are in the same coordinates.
   let box: Electron.Rectangle | null = null;
   try { box = await timeline.webContents.executeJavaScript(`(() => { const r = document.querySelector('#frame img')?.getBoundingClientRect(); return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null; })()`); } catch {}
   const size = full.getSize();
-  let crop = { x: 0, y: 0, width: size.width, height: size.height };
-  if (box && box.width > 0 && box.height > 0) {
-    const r = data.rect, k = size.width / box.width;
-    const x1 = Math.max(r.x, box.x), y1 = Math.max(r.y, box.y), x2 = Math.min(r.x + r.width, box.x + box.width), y2 = Math.min(r.y + r.height, box.y + box.height);
-    if (x2 - x1 > 2 && y2 - y1 > 2) crop = { x: Math.round((x1 - box.x) * k), y: Math.round((y1 - box.y) * k), width: Math.round((x2 - x1) * k), height: Math.round((y2 - y1) * k) };
-  }
-  const image = full.crop(crop);
+  const cropOf = (r: Electron.Rectangle) => {
+    if (box && box.width > 0 && box.height > 0) {
+      const k = size.width / box.width;
+      const x1 = Math.max(r.x, box.x), y1 = Math.max(r.y, box.y), x2 = Math.min(r.x + r.width, box.x + box.width), y2 = Math.min(r.y + r.height, box.y + box.height);
+      if (x2 - x1 > 2 && y2 - y1 > 2) return { x: Math.round((x1 - box.x) * k), y: Math.round((y1 - box.y) * k), width: Math.round((x2 - x1) * k), height: Math.round((y2 - y1) * k) };
+    }
+    return { x: 0, y: 0, width: size.width, height: size.height };
+  };
+  const crops = notes.map(n => cropOf(n.rect));
   const at = new Date(step.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const url = step.url || 'unknown';
+  const area = (c: Electron.Rectangle) => `Marked area (px of the ${size.width} × ${size.height} screenshot): x ${c.x}, y ${c.y}, ${c.width} × ${c.height}`;
   const text = [
-    data.text ? `The user says${data.dictated ? ' (dictated: a word may be misheard)' : ''}: ${data.text}` : 'The user marked an area without a comment.',
+    notes.length === 1 ? said(notes[0]) : together(notes.length, 'an earlier screenshot'),
     `This is about an earlier state, not the live page: the screenshot Habitab took after your tool call ${step.tool} at ${at}.`,
     `Page then: ${url}${step.title ? ` ("${step.title}")` : ''}`,
-    `Marked area (px of the ${size.width} × ${size.height} screenshot): x ${crop.x}, y ${crop.y}, ${crop.width} × ${crop.height}`,
+    ...(notes.length === 1 ? [area(crops[0])] : notes.flatMap((n, i) => [`${i + 1}. ${said(n)}`, `   ${area(crops[i])}`])),
   ].join('\n');
-  await deliverFeedback(s, { text, comment: data.text, url, image, what: 'marked an area of an earlier screenshot of' });
+  await deliverFeedback(s, {
+    text, comment: notes.map(n => n.text).filter(Boolean).join('\n'), url, what: 'marked an area of an earlier screenshot of',
+    images: crops.map(c => full.crop(c)), overview: async () => full.crop(union(crops)),
+  });
 }
 
-/** Feedback to the waiting agent, pushed to it, or kept (and copied to the clipboard). */
-async function deliverFeedback(s: Session, f: { text: string; comment: string; url: string; image: Electron.NativeImage; what?: string }): Promise<void> {
-  const { text, image } = f;
-  const how = manager.submitFeedback(s, { text, comment: f.comment, url: f.url, what: f.what, image: image.isEmpty() ? undefined : image.toPNG().toString('base64') });
+/** Feedback to the waiting agent, pushed to it, or kept (and copied to the clipboard; `overview`: its one image when there are several). */
+async function deliverFeedback(s: Session, f: { text: string; comment: string; url: string; images: Electron.NativeImage[]; overview?: () => Promise<Electron.NativeImage>; what?: string }): Promise<void> {
+  const { text, images } = f;
+  const how = manager.submitFeedback(s, { text, comment: f.comment, url: f.url, what: f.what, images: images.filter(i => !i.isEmpty()).map(i => i.toPNG().toString('base64')) });
   if (how === 'pushed') return showNotice(`Sent to ${s.meta.client === 'codex' ? 'Codex' : s.meta.client === 'claude' ? 'Claude Code' : 'the agent'}`);
   if (testHidden) lastClipboard = text; // tests must not touch the user's clipboard
-  else await clipboard.write([new ClipboardItem({ 'text/plain': text, 'image/png': new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' }) })]);
+  else {
+    const image = images.length > 1 && f.overview ? await f.overview().catch(() => images[0]) : images[0];
+    await clipboard.write([new ClipboardItem({ 'text/plain': text, 'image/png': new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' }) })]);
+  }
   showNotice('Copied to the clipboard: this agent has no channel for feedback');
 }
 let lastClipboard = '';
@@ -1188,7 +1227,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(paths.appPathFile, JSON.stringify({ exe: process.execPath, args, env: desktopEnv() }), { mode: 0o600 });
     if (!testControl) installDesktopEntry({ exe: process.execPath, args }, path.join(UI, 'icon.png'), paths.home);
   } catch (e: any) { log(`script install failed: ${e.message}`); }
-  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, findText: () => findOpen ? findText : null, lastShare: () => lastShare, speechResult: (text, final) => speech.fakeResult(text, final), speechLevel: level => speech.fakeLevel(level), speechPermission: (wait: boolean) => { fakeMicWaits = wait; if (!wait) { fakeMicAnswer?.(); fakeMicAnswer = undefined; } }, view: name => ({ sidebar, topbar, responsive, timeline, annotator, status, find, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
+  if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, annotateKept: () => annotateKept, findText: () => findOpen ? findText : null, lastShare: () => lastShare, speechResult: (text, final) => speech.fakeResult(text, final), speechLevel: level => speech.fakeLevel(level), speechPermission: (wait: boolean) => { fakeMicWaits = wait; if (!wait) { fakeMicAnswer?.(); fakeMicAnswer = undefined; } }, view: name => ({ sidebar, topbar, responsive, timeline, annotator, status, find, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
 });
 

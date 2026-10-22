@@ -938,25 +938,33 @@ export class SessionManager {
    * app-server daemon (the image as such), Claude Code through the inbox
    * socket. Without a channel (other clients) it is kept for the clipboard.
    */
-  submitFeedback(s: Session, f: { text: string; image?: string; comment?: string; url: string; what?: string }): 'pushed' | 'kept' {
+  submitFeedback(s: Session, f: { text: string; images?: string[]; comment?: string; url: string; what?: string }): 'pushed' | 'kept' {
     const target = s.codexThread ? 'codex' : s.line && canPush(s.meta) ? 'inbox' : undefined;
     if (!target) return 'kept';
-    let file: string | undefined;
-    if (f.image) {
+    const files: string[] = [];
+    const images = f.images ?? [];
+    if (images.length) {
       try {
         const dir = this.timelineDir(s);
         fs.mkdirSync(dir, { recursive: true });
-        file = path.join(dir, `feedback-${Date.now()}.png`);
-        fs.writeFileSync(file, Buffer.from(f.image, 'base64'));
+        const at = Date.now();
+        images.forEach((image, i) => {
+          const file = path.join(dir, `feedback-${at}${images.length > 1 ? `-${i + 1}` : ''}.png`);
+          fs.writeFileSync(file, Buffer.from(image, 'base64'));
+          files.push(file);
+        });
       } catch (e: any) { log(`feedback image not written: ${e.message}`); }
     }
+    const part = f.what ? 'part' : 'area';
     const content = [
       'Feedback from the user in Habitab:',
       f.text,
-      file && target === 'inbox' ? `Screenshot of the marked ${f.what ? 'part' : 'area'}: ${file} (look at it with your file reading tool).` : '',
+      target !== 'inbox' || !files.length ? ''
+        : files.length === 1 ? `Screenshot of the marked ${part}: ${files[0]} (look at it with your file reading tool).`
+        : `Screenshots of the marked ${part}s, in their order (look at them with your file reading tool):\n${files.map((file, i) => `${i + 1}. ${file}`).join('\n')}`,
       'Act on it and report in your session as usual; the user sends more feedback on their own.',
     ].filter(Boolean).join('\n');
-    if (target === 'codex') void this.codex.push(s.codexThread!, content, file);
+    if (target === 'codex') void this.codex.push(s.codexThread!, content, files);
     else s.line!.send({ type: 'feedbackPush', content });
     return 'pushed';
   }
