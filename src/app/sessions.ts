@@ -12,6 +12,7 @@ import path from 'node:path';
 import { canPush, isSessionId, LineSocket, Message, SessionMeta } from '../shared/ipc';
 import { log, paths } from '../shared/paths';
 import { isAlive } from '../shared/platform';
+import { downloading, freeDownloadPath, type Download } from './downloads';
 import { prefs, setPrefs } from './prefs';
 import { SessionProxy } from './proxy';
 import { StepDetector } from './cdp-steps';
@@ -333,6 +334,8 @@ export class SessionManager {
   onThumb: (tab: Tab) => void = () => {};
   /** A short notice for the user (the status line). */
   onNotice: (text: string) => void = () => {};
+  /** A download started, made progress or ended. */
+  onDownload: (d: Download) => void = () => {};
   /** A page asks for camera/microphone or to read the clipboard and no answer is stored: ask the user (true = allow). */
   onAccessRequest: (s: Session, kind: SiteAccess, origin: string, types: ('video' | 'audio')[]) => Promise<boolean> = async () => false;
   /** Context menu "Send Element to Agent": the app opens the marking overlay on it (view coordinates). */
@@ -625,10 +628,21 @@ export class SessionManager {
     });
     // Pages get what Electron lacks compared to Chrome (the Web Share API, see page-preload.ts).
     ses.registerPreloadScript({ type: 'frame', id: 'habitab-page', filePath: path.join(__dirname, 'page-preload.js') });
+    // Downloads go to ~/Downloads without a dialog (like Chrome's default); a name that is taken gets a number.
     ses.on('will-download', (_e, item) => {
-      const dir = path.join(os.homedir(), 'Downloads');
-      item.setSavePath(path.join(dir, item.getFilename()));
-      s.activity.unshift({ tool: 'Download', summary: item.getFilename(), start: Date.now() });
+      const file = freeDownloadPath(process.env.HABITAB_DOWNLOADS || app.getPath('downloads'), item.getFilename());
+      item.setSavePath(file);
+      downloading.add(file);
+      log(`session ${s.id} download: ${item.getURL().slice(0, 300)} -> ${file}`);
+      s.activity.unshift({ tool: 'Download', summary: path.basename(file), start: Date.now() });
+      const report = (state: Download['state']) => this.onDownload({ session: s.id, name: path.basename(file), file, state, received: item.getReceivedBytes(), total: item.getTotalBytes() });
+      item.on('updated', (_e, state) => report(state === 'interrupted' ? 'interrupted' : 'progressing'));
+      item.once('done', (_e, state) => {
+        downloading.delete(file);
+        log(`session ${s.id} download ${state}: ${file}`);
+        report(state);
+      });
+      report('progressing');
       this.onChange();
     });
   }

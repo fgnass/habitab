@@ -22,6 +22,7 @@ const tmp = fs.mkdtempSync(path.join(process.env.TEST_TMP ?? os.tmpdir(), 'hb-ap
 const env = bridgeEnv(tmp, {
   ...(process.env.HABITAB_TEST_VISIBLE ? { HABITAB_TEST_VISIBLE: process.env.HABITAB_TEST_VISIBLE } : {}),
   HABITAB_AUTO_RESUME_MS: '2500',
+  HABITAB_DOWNLOADS: path.join(tmp, 'downloads'),
 });
 // Fake Claude Code inbox socket (cross-session messaging): feedback notes arrive here.
 const inboxPath = path.join(tmp, 'inbox.sock');
@@ -497,6 +498,23 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.problems.length, '
   await b.tool('evaluate_script', { pageId: await pageId(b), function: '() => { console.error("after closing"); return 1; }' });
   check(await badge() === 1, 'problems: a new error after closing the DevTools counts');
   if (wasOpen) await control(`devtools ${sb.id}`);
+}
+
+// Downloads: into the downloads folder without a dialog, a taken name gets a number, the status line says so
+{
+  fs.mkdirSync(path.join(tmp, 'downloads'), { recursive: true });
+  await b.tool('navigate_page', { pageId: await pageId(b), url: `${base}/headers` });
+  await control(`select ${sb.id}`);
+  const fetchFile = async () => b.tool('evaluate_script', { pageId: await pageId(b), function: `() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['hello'])); a.download = 'note.txt'; document.body.append(a); a.click(); return 1; }` });
+  const file = name => path.join(tmp, 'downloads', name);
+  const arrived = async name => { for (let i = 0; i < 50 && !fs.existsSync(file(name)); i++) await sleep(100); return fs.existsSync(file(name)) && fs.readFileSync(file(name), 'utf8'); };
+  await fetchFile();
+  check(await arrived('note.txt') === 'hello', 'download: the file lands in the downloads folder');
+  await fetchFile();
+  check(await arrived('note (1).txt') === 'hello', 'download: a taken name gets a number, the first file stays');
+  await sleep(300);
+  const line = await uiEval('status', `document.getElementById('line').textContent`);
+  check(/Downloaded note \(1\)\.txt/.test(line?.result ?? '') && /Show in/.test(line?.result ?? ''), 'download: the status line names the file and offers to show it', line?.result);
 }
 
 // Web Share API: Electron lacks it; Habitab adds navigator.share before page scripts and receives the data (no menu in tests). macOS only: there is no share menu elsewhere

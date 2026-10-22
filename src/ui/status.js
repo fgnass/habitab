@@ -63,6 +63,20 @@ function button(cls, icon, text, title, onclick) {
   return b;
 }
 
+/** A download: its progress, or how it ended; Show in Finder once the file is there. */
+function downloadCells(d) {
+  const mb = n => n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} kB`;
+  const text = {
+    progressing: `Downloading ${d.name}` + (d.total > 0 ? ` · ${Math.floor(d.received / d.total * 100)} %` : d.received ? ` · ${mb(d.received)}` : ''),
+    completed: `Downloaded ${d.name} to Downloads`,
+    cancelled: `Download cancelled: ${d.name}`,
+    interrupted: `Download failed: ${d.name}`,
+  }[d.state];
+  const cells = [wide(text, d.state === 'interrupted' ? 'error' : 'notice')];
+  if (d.state === 'completed') cells.push(button('act own', 'folder', api.platform === 'darwin' ? 'Show in Finder' : 'Show in Folder', 'Show the downloaded file', () => api.action('showDownload')));
+  return cells;
+}
+
 /** Closes the selected session's front tab (as the state shows it at the click). */
 function closeFrontTab() {
   const s = last?.sessions.find(x => x.id === last.selected);
@@ -122,7 +136,7 @@ function render() {
   const more = group ? group.steps.length - 1 : 0;
   const hasDetails = !!group && (more > 0 || group.steps.some(x => details(x).length));
   if (!hasDetails) pop = false;
-  const key = JSON.stringify([open, pop, state.notice, state.annotating, state.annotateKept, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held, s?.waiting, !!s?.nav?.own]);
+  const key = JSON.stringify([open, pop, state.notice, state.download, state.annotating, state.annotateKept, chosen?.id, groups.map(g => [g.id, g.state, g.steps.length]), current, latest?.durationMs, stateText(s), s?.id, s?.held, s?.waiting, !!s?.nav?.own]);
   if (key === shown) return;
   shown = key;
   document.body.classList.toggle('open', open);
@@ -142,6 +156,7 @@ function render() {
   else if (state.annotating) cells = [wide((state.timelinePreview ? 'Mark an area of this earlier screenshot' : 'Mark an area of the page') + (s?.held ? ' · the agent waits' : ''), 'hint'), el('span', 'state esc', 'Esc to cancel')];
   else if (chosen) cells = lineCells(chosen.head);
   else if (state.notice) cells = [wide(state.notice, 'notice')];
+  else if (state.download) cells = downloadCells(state.download);
   // The user's own tab (Own Tab): say so, the agent's calls are in its tab.
   else if (s?.nav?.own) cells = [wide('Your own tab: the agent does not use it and goes on in its tab', 'own'), button('act own', 'x', 'Close Tab', 'Close your own tab (⌘W)', closeFrontTab)];
   else if (waiting) cells = waitingCells(current);

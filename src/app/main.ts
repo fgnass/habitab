@@ -10,6 +10,7 @@ import { desktopEnv, installDesktopEntry } from '../shared/platform';
 import { prefs, setPrefs, SidebarMode, sidebarMode } from './prefs';
 import { Session, SessionManager, SiteAccess, Tab } from './sessions';
 import { nearestModel, SpeechEvent, SpeechService } from './speech';
+import type { Download } from './downloads';
 import { uiState } from './ui-state';
 
 /** Sidebar widths: thumbnails with titles, thumbnails only (room for the window buttons), none. */
@@ -104,6 +105,10 @@ const LINK = 24;
 let linkRight = false;
 /** Short message in the top bar, e.g. after copying to the clipboard. */
 let notice: { text: string; until: number } | undefined;
+/** The last download: the status line shows it while it runs and a short while after. */
+let download: (Download & { at: number }) | undefined;
+let downloadPublished = 0;
+const DOWNLOAD_SHOWN = 8000;
 let manager: SessionManager;
 let devtoolsRatio = prefs().devtoolsRatio ?? 0.42;
 let splitting = false;
@@ -284,7 +289,7 @@ function publish(): void {
   publishTimer = setTimeout(() => {
     publishTimer = undefined;
     if (quitting || win.isDestroyed()) return;
-    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, annotateKept, findText: findOpen ? findText : null, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null };
+    const state = { ...uiState(manager), errors: errors.slice(-3), annotating, annotateKept, findText: findOpen ? findText : null, timelineOpen, timelinePreview, timelineStep, linkRight, notice: notice && notice.until > Date.now() ? notice.text : null, download: shownDownload() };
     for (const v of [sidebar, topbar, empty, responsive, annotator, status, timeline, link, find]) if (!v.webContents.isDestroyed()) v.webContents.send('state', state);
     updateMenu();
     manager.saveSoon();
@@ -424,6 +429,7 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
       return manager.emulate(s.active, next);
     }
     case 'setup': return openSetup();
+    case 'showDownload': return download && shell.showItemInFolder(download.file);
     case 'openLog': return shell.openPath(path.join(paths.logs, 'app.log'));
     case 'dismissErrors': errors.length = 0; publish(); return;
   }
@@ -770,6 +776,23 @@ async function sendElement(s: Session, tab: Tab, x: number, y: number): Promise<
   if (selected() !== s || s.active !== tab) select(s.id, tab.id);
   setAnnotating(true);
   if (rect && rect.width > 4 && rect.height > 4 && !annotator.webContents.isDestroyed()) annotator.webContents.send('annotate-rect', rect);
+}
+
+/** A download in the status line: progress at most a few times a second, the end at once (and gone after a while). */
+function showDownload(d: Download): void {
+  const changed = d.state !== download?.state || d.file !== download?.file;
+  download = { ...d, at: Date.now() };
+  // The newer news wins: a notice from before goes.
+  if (changed) notice = undefined;
+  if (!changed && Date.now() - downloadPublished < 250) return;
+  downloadPublished = Date.now();
+  publish();
+  if (d.state !== 'progressing') setTimeout(publish, DOWNLOAD_SHOWN + 100);
+}
+function shownDownload() {
+  if (!download || (download.state !== 'progressing' && Date.now() - download.at > DOWNLOAD_SHOWN)) return null;
+  const { name, state, received, total } = download;
+  return { name, state, received, total };
 }
 
 function showNotice(text: string): void {
@@ -1180,6 +1203,7 @@ app.whenReady().then(async () => {
   manager.onSendElement = (s, t, x, y) => void sendElement(s, t, x, y);
   manager.onThumb = t => { if (!sidebar.webContents.isDestroyed()) sidebar.webContents.send('thumb', t.id, t.thumb ?? null); };
   manager.onNotice = showNotice;
+  manager.onDownload = showDownload;
   manager.onAccessRequest = askSiteAccess;
   empty = uiView('empty.html');
   responsive = uiView('responsive.html');

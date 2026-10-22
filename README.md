@@ -83,6 +83,9 @@ Habitab.app (Electron)
      (page ids change). localStorage and IndexedDB survive only with a
      persistent profile
    • agents never raise the window (bringToFront only switches the tab)
+   • downloads go to the Downloads folder without a dialog; a taken name gets
+     a number like in Chrome ("name (1).ext"). The status line shows the
+     progress, then the file with Show in Finder; app.log lists every download
    • feedback: the user marks an area of the page (⇧⌘A) and writes a comment;
      the agent gets a note with the comment, the page, the elements in the area
      and the area as an image (Claude Code: the path of a PNG in the session's

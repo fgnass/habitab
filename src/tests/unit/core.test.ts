@@ -5,6 +5,7 @@ import { classify } from '../../installer/model';
 import { applyEdits, stringArrayOf, stringOf, TomlScanner } from '../../installer/toml';
 import { parseCommand, wrapper } from '../../shared/server-command';
 import { launcherScript } from '../../shared/platform';
+import { freeDownloadPath } from '../../app/downloads';
 
 const parse = (line: string) => { const [c, ...a] = line.split(' '); return parseCommand(c, a); };
 
@@ -90,4 +91,12 @@ test('the habitab script runs a 0.2 wrapper command unchanged when the app is go
   assert.match(script, /ELECTRON_RUN_AS_NODE=1 exec "\$APP" "\$JS" "\$@"/);
   assert.match(script, /JS='\/x\/it'\\''s\/main\.js'/);
   assert.match(script, /\[ "\$1" = "mcp" \] && shift\n\[ "\$1" = "--" \] && shift\nexec "\$@"/);
+});
+
+test('download names like Chrome', () => {
+  const taken = (...names: string[]) => (p: string) => names.includes(path.basename(p));
+  assert.equal(freeDownloadPath('/d', 'a.txt', taken()), path.join('/d', 'a.txt'));
+  assert.equal(freeDownloadPath('/d', 'a.txt', taken('a.txt', 'a (1).txt')), path.join('/d', 'a (2).txt'));
+  assert.equal(freeDownloadPath('/d', 'archive.tar.gz', taken('archive.tar.gz')), path.join('/d', 'archive.tar (1).gz'));
+  assert.equal(freeDownloadPath('/d', 'README', taken('README')), path.join('/d', 'README (1)'));
 });
