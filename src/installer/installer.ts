@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ensureHome, log, paths } from '../shared/paths';
 import { clientOfCommand } from '../shared/session-info';
-import { browserScript, launcherScript, processList } from '../shared/platform';
+import { browserScript, launcherScript, processList, processStartTimes, ProcessRow } from '../shared/platform';
+import { cd4aStatus } from './cd4a';
 import { analyze, isServerToken, wrapper } from '../shared/server-command';
 import { claudeConfigFile, claudeProjects, restoreClaude, scanClaude } from './claude';
 import { codexTrustedProjects, restoreCodex, scanCodex } from './codex';
@@ -91,9 +92,16 @@ export interface LegacyServer {
  * started before the global config was set, or through a 0.2 launcher. Their
  * sessions keep their old browser until the client restarts the server. One
  * entry per client process.
+ *
+ * The server reads the config when it starts, but starts its browser (and so
+ * the bridge) only on the first tool call. A server without a bridge that
+ * started after the last change of the config uses Habitab and is not legacy.
  */
-export function legacyServers(): LegacyServer[] {
-  const rows = processList();
+export function legacyServers(
+  rows: ProcessRow[] = processList(),
+  configChanged: number | null = habitabConfigChanged(),
+  startTimes: (pids: number[]) => Map<number, number> = processStartTimes,
+): LegacyServer[] {
   const byPid = new Map(rows.map(r => [r.pid, r]));
   const tokens = (cmd: string) => cmd.split(/\s+/).filter(Boolean);
   const isServer = (cmd: string) => tokens(cmd).some(isServerToken);
@@ -110,7 +118,7 @@ export function legacyServers(): LegacyServer[] {
   const bridges = rows.filter(r => isBridge(r.command));
   const bridged = new Set(bridges.flatMap(r => ancestors(r).map(p => p.pid)));
   const withHabitab = new Set(bridges.map(r => ancestors(r).find(p => isClient(p.command))?.pid));
-  const result = new Map<number, LegacyServer>();
+  const candidates: { r: ProcessRow; client?: ProcessRow }[] = [];
   for (const r of rows) {
     const t = tokens(r.command);
     const idx = t.findIndex(isServerToken);
@@ -119,12 +127,27 @@ export function legacyServers(): LegacyServer[] {
     if (bridged.has(r.pid)) continue;
     // Only the topmost process of an npx/npm/node chain.
     if (chain[0] && isServer(chain[0].command)) continue;
-    const client = chain.find(p => isClient(p.command));
+    candidates.push({ r, client: chain.find(p => isClient(p.command)) });
+  }
+  // ps shows start times in whole seconds: a server of the same second counts as started after the change.
+  const changedSecond = configChanged === null ? undefined : Math.floor(configChanged / 1000) * 1000;
+  const started = changedSecond === undefined ? new Map<number, number>() : startTimes(candidates.map(c => c.r.pid));
+  const result = new Map<number, LegacyServer>();
+  for (const { r, client } of candidates) {
+    const t = started.get(r.pid);
+    if (changedSecond !== undefined && t !== undefined && t >= changedSecond) continue;
     const key = client?.pid ?? -r.pid;
     if (result.has(key)) continue;
     result.set(key, { pid: r.pid, client: client ? clientOfCommand(client.command) as ClientKind : 'unknown', clientPid: client?.pid, replaced: !!client && withHabitab.has(client.pid) });
   }
   return [...result.values()];
+}
+
+/** When the global config last changed, if it names Habitab's browser. */
+function habitabConfigChanged(): number | null {
+  const s = cd4aStatus();
+  if (!s.habitab) return null;
+  try { return fs.statSync(s.file).mtimeMs; } catch { return null; }
 }
 
 

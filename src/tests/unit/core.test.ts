@@ -6,6 +6,7 @@ import { applyEdits, stringArrayOf, stringOf, TomlScanner } from '../../installe
 import { parseCommand, wrapper } from '../../shared/server-command';
 import { launcherScript } from '../../shared/platform';
 import { freeDownloadPath } from '../../app/downloads';
+import { legacyServers } from '../../installer/installer';
 
 const parse = (line: string) => { const [c, ...a] = line.split(' '); return parseCommand(c, a); };
 
@@ -99,4 +100,23 @@ test('download names like Chrome', () => {
   assert.equal(freeDownloadPath('/d', 'a.txt', taken('a.txt', 'a (1).txt')), path.join('/d', 'a (2).txt'));
   assert.equal(freeDownloadPath('/d', 'archive.tar.gz', taken('archive.tar.gz')), path.join('/d', 'archive.tar (1).gz'));
   assert.equal(freeDownloadPath('/d', 'README', taken('README')), path.join('/d', 'README (1)'));
+});
+
+test('a server without a browser bridge needs a restart only if it started before the config changed', () => {
+  const rows = [
+    { pid: 10, ppid: 1, command: 'claude --session-id=a' },
+    { pid: 11, ppid: 10, command: 'npm exec chrome-devtools-mcp@latest --isolated' },
+    { pid: 20, ppid: 1, command: 'claude --session-id=b' },
+    { pid: 21, ppid: 20, command: 'npm exec chrome-devtools-mcp@latest --isolated' },
+    { pid: 30, ppid: 1, command: 'claude --session-id=c' },
+    { pid: 31, ppid: 30, command: 'npm exec chrome-devtools-mcp@latest --isolated' },
+    { pid: 32, ppid: 31, command: '/Applications/Habitab.app/Contents/MacOS/Habitab /x/launcher/main.js browser --remote-debugging-pipe' },
+  ];
+  const changed = Date.parse('2026-10-19T16:53:00.500Z');
+  const started = new Map([[11, Date.parse('2026-10-19T16:52:59Z')], [21, Date.parse('2026-10-19T16:53:00Z')], [31, 0]]);
+  const legacy = legacyServers(rows, changed, () => started);
+  assert.deepEqual(legacy.map(l => l.clientPid), [10]);
+  // Without a Habitab config (or start times), every server without a bridge counts.
+  assert.deepEqual(legacyServers(rows, null, () => started).map(l => l.clientPid), [10, 20]);
+  assert.deepEqual(legacyServers(rows, changed, () => new Map()).map(l => l.clientPid), [10, 20]);
 });

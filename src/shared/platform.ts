@@ -131,6 +131,22 @@ export function processList(): ProcessRow[] {
   }).filter((r): r is ProcessRow => r !== null);
 }
 
+/** Start times (ms since epoch) of the given processes; empty where the platform cannot tell. */
+export function processStartTimes(pids: number[]): Map<number, number> {
+  const result = new Map<number, number>();
+  if (!pids.length || platform === 'win32') return result;
+  let out: string;
+  // ps exits 1 when one of the pids is gone; the others still print.
+  try { out = execFileSync('ps', ['-o', 'pid=,lstart=', '-p', pids.join(',')], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } }); }
+  catch (e: any) { out = typeof e?.stdout === 'string' ? e.stdout : ''; }
+  for (const line of out.split('\n')) {
+    const m = line.trim().match(/^(\d+)\s+(.+)$/);
+    const t = m ? Date.parse(m[2]) : NaN;
+    if (!Number.isNaN(t)) result.set(+m![1], t);
+  }
+  return result;
+}
+
 /** Executable name of a process (argv[0] base name). */
 export function processName(pid: number): string | undefined {
   if (platform === 'win32') return processList().find(p => p.pid === pid)?.command.split(/[\\/]/).pop()?.split(' ')[0];
