@@ -186,8 +186,6 @@ function layout(): void {
         t.view.setBounds({ ...pos, width: w, height: h });
         const frame = { x: pos.x - area.x, y: pos.y - area.y, width: w, height: h, scale };
         if (JSON.stringify(frame) !== JSON.stringify(t.frame)) { t.frame = frame; framesChanged = true; }
-      } else if (t.fixedSize) {
-        t.view.setBounds({ ...centered(t.fixedSize.width, area.y), ...t.fixedSize });
       } else {
         t.view.setBounds({ ...area, width: pageWidth });
       }
@@ -352,6 +350,8 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
       if (s.active.debuggerPaused) return manager.pauseDebugger(s, s.active, false);
       return manager.setPausesDebugger(s, true);
     }
+    // Top bar: the page Habitab paused for its GPU load runs again.
+    case 'gpuResume': return s?.active && manager.resumeGpu(s.active);
     case 'persistentProfile': { const x = manager.sessions.get(args[0]); if (x) { await manager.togglePersistentProfile(x); layout(); publish(); } return; }
     case 'sidebar': return toggleSidebarWidth();
     case 'annotate': return setAnnotating(args[0] ?? !annotating);
@@ -397,7 +397,6 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'sessionMenu': { const x = manager.sessions.get(args[0]); if (x) sessionMenu(x, args[1], args[2], args[3]); return; }
     case 'closeBrowser': { const x = manager.sessions.get(args[0]); if (x) { manager.closeBrowser(x); layout(); } return; }
     case 'remove': { const x = manager.sessions.get(args[0]); if (x) manager.remove(x); return; }
-    case 'resetSize': { if (s?.active) { s.active.fixedSize = undefined; layout(); publish(); } return; }
     case 'split': {
       // Splitter drag: start, move (screen x), end.
       if (args[0] === 'move') {
@@ -1096,6 +1095,7 @@ function installer(op: string, ids?: string[]): Promise<any> {
 ipcMain.handle('setup', (_e, op: string, ids?: string[]) => installer(op, ids));
 ipcMain.handle('habitab:share', (e, json: string) => sharePage(e.sender.id, json));
 ipcMain.handle('habitab:speech', (e, json: string) => speechRequest(e.sender, json));
+ipcMain.on('habitab:draws', (e, draws: number) => manager?.drawReport(e.sender.id, draws));
 
 function openSetup(): void {
   if (setupWindow && !setupWindow.isDestroyed()) { setupWindow.show(); setupWindow.focus(); return; }
@@ -1158,7 +1158,6 @@ function updateMenu(): void {
       { label: 'DevTools', accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I', enabled: !!s?.active, click: () => s && manager.toggleDevtools(s) },
       { label: 'Timeline', type: 'checkbox', checked: timelineOpen, accelerator: 'CmdOrCtrl+Shift+Y', enabled: !!s, click: () => setTimelineOpen(!timelineOpen) },
       { label: 'Responsive Mode', type: 'checkbox', checked: !!s?.active?.emulation, accelerator: 'CmdOrCtrl+Shift+M', enabled: !!s?.active, click: () => void action('responsive') },
-      { label: 'Reset Agent Size', enabled: !!s?.active?.fixedSize, click: () => { if (s?.active) { s.active.fixedSize = undefined; layout(); publish(); } } },
       { role: 'togglefullscreen', label: 'Toggle Full Screen' },
     ] },
     { label: 'Session', submenu: [
@@ -1239,7 +1238,7 @@ app.whenReady().then(async () => {
   updateMenu();
   // Also saves now and then: cookies change without a state change.
   setInterval(() => { manager.idleCheck(); manager.saveSoon(); }, 30_000);
-  setInterval(() => manager.cpuCheck(), 3_000);
+  setInterval(() => { manager.cpuCheck(); void manager.gpuCheck(); }, 3_000);
 
   // The habitab command and the browser script (executablePath of the global config).
   try {

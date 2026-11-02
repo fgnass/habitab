@@ -60,6 +60,15 @@ Habitab.app (Electron)
      audio worklets). Your input in a tab pauses it; the agent's next work in
      that tab turns it on again. A tab with high CPU use shows a hint in the
      top bar
+   • GPU load per tab: the sidebar shows "GPU 60%" on a tab that loads the GPU
+     (WebGL, WebGPU). The pages count their draw calls; the GPU time is the
+     GPU process's (macOS IO registry). With several drawing tabs, each one
+     holds its animation frames for a moment in turn, and the drop is its
+     share (HABITAB_GPU_TRACE=1 logs the numbers). A tab above half the GPU
+     for 15 s gets paused: its animation frames wait (then its timers too,
+     if it keeps drawing; if even that does not help, its renderer is
+     stopped). The agent gets a note; Resume Animation (or Reload Page) in
+     the top bar lets it run again, and a new page load starts it anew
    • persistent profile per project (optional): cookies, localStorage, IndexedDB,
      service workers and cache are stored on disk and survive app restarts; one
      live session uses the profile, parallel ones start with a copy of its cookies
@@ -72,7 +81,8 @@ Habitab.app (Electron)
      with scripts and errors. The hovered link's URL shows in a bubble at the
      bottom of the page
    • responsive mode (⇧⌘M): fills the free space by default (zoom: fit); drag
-     handles like Chrome's, width presets from phone to 2xl, width × height
+     handles like Chrome's, width presets from phone to 2xl and one that fills
+     the space again, width × height. The agent's size lights no preset
    • take control: a click in a page holds the agent's next commands (key
      presses only after a click since you came back to Habitab, so Cmd+Tab
      does not count); it goes on after 10 s without input, when you switch
@@ -270,7 +280,7 @@ installation. They run invisibly (no Dock icon, no focus); `HABITAB_TEST_VISIBLE
 parallel screenshots in visible and hidden sessions, `new_page`/`close_page`,
 popups with `window.opener`, exact `resize_page`, DevTools in parallel with the agent,
 take control (manual and automatic, agent input does not count), responsive mode
-shared with the agent's `emulate`, Web Speech and dictation (with a fake
+shared with the agent's `emulate` and `resize_page`, Web Speech and dictation (with a fake
 recognizer, `HABITAB_FAKE_SPEECH=1`), the window never takes focus, no Chrome process,
 exactly one Dock entry, session end,
 a crash of client, server and bridge, app restart, steps from CDP, feedback

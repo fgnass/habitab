@@ -48,6 +48,7 @@ export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: st
         for (const type of ['rawKeyDown', 'keyUp'] as const) s.active.view.webContents.sendInputEvent({ type, keyCode: 'Tab', modifiers: ['meta'] });
       }
       // Like Cmd+W: closes the active tab without activating another one first.
+      else if (cmd === 'gpupause' && s?.active) m.pauseGpu(s, s.active);
       else if (cmd === 'closetab' && s?.active) s.active.view.webContents.close();
       else if (cmd === 'remove' && s) m.remove(s);
       // Runs a script in one of the app's own views (e.g. \`ui timeline <js>\`), in the selected session's DevTools, or in its page (`ui page <js>`, not through the CDP proxy).

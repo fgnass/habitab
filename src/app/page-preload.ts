@@ -240,6 +240,95 @@ function installSpeech(request: (json: string) => Promise<string>, subscribe: (c
   for (const [name, value] of Object.entries(globals)) Object.defineProperty(window, name, { configurable: true, enumerable: false, writable: true, value });
 }
 
+/**
+ * Runs in the page's main world, for the app's GPU check (see
+ * SessionManager.gpuCheck):
+ *   - counts the page's draw calls (WebGL) and submits (WebGPU) and tells the
+ *     app once a second while there are some, and once more when they stop.
+ *     These tell which tabs can load the GPU; timer queries in the page
+ *     cannot tell, as they also count the time the GPU works for other tabs;
+ *   - holds the page when the app asks: a moment, to see how much the GPU
+ *     load goes down, or until the user resumes it (too much load). Level 1:
+ *     requestAnimationFrame callbacks wait; level 2: also the callbacks of
+ *     setTimeout and setInterval (one per timer). They run when the hold
+ *     ends; the canvas keeps its last picture.
+ * Not covered: workers (OffscreenCanvas).
+ */
+function installGpuProbe(report: (draws: number) => void, onHold: (cb: (level: number) => void) => void): void {
+  let draws = 0, quiet = 2;
+  const count = (proto: any, names: string[]) => {
+    for (const name of names) {
+      const orig = proto?.[name];
+      if (typeof orig !== 'function') continue;
+      proto[name] = function (this: unknown, ...args: unknown[]) { draws++; return orig.apply(this, args); };
+    }
+  };
+  const DRAWS = ['drawArrays', 'drawElements', 'drawArraysInstanced', 'drawElementsInstanced', 'drawRangeElements'];
+  count(globalThis.WebGLRenderingContext?.prototype, DRAWS);
+  count(globalThis.WebGL2RenderingContext?.prototype, DRAWS);
+  count((globalThis as any).GPUQueue?.prototype, ['submit']);
+  setInterval(() => {
+    quiet = draws ? 0 : quiet + 1;
+    if (quiet <= 1) report(draws);
+    draws = 0;
+  }, 1000);
+
+  // While held, callbacks get ids of their own; when the hold ends they are
+  // requested for real, and a cancel with the held id still finds them.
+  const raf = window.requestAnimationFrame.bind(window), caf = window.cancelAnimationFrame.bind(window);
+  let held = false, nextId = 1e9;
+  const waiting = new Map<number, FrameRequestCallback>(), real = new Map<number, number>();
+  window.requestAnimationFrame = function requestAnimationFrame(cb: FrameRequestCallback): number {
+    if (!held) return raf(cb);
+    const id = nextId++;
+    waiting.set(id, cb);
+    return id;
+  };
+  window.cancelAnimationFrame = function cancelAnimationFrame(id: number): void {
+    if (waiting.delete(id)) return;
+    const r = real.get(id);
+    if (r !== undefined) { real.delete(id); return caf(r); }
+    caf(id);
+  };
+
+  // Timers: a callback that comes while held waits, the newest one per timer.
+  const st = window.setTimeout.bind(window), si = window.setInterval.bind(window);
+  let timersHeld = false;
+  const later = new Map<object, () => void>();
+  const guard = (cb: Function, args: unknown[]) => {
+    const run = function (this: unknown) {
+      if (timersHeld) { later.set(run, () => cb.apply(this, args)); return; }
+      return cb.apply(this, args);
+    };
+    return run;
+  };
+  (window as any).setTimeout = function setTimeout(cb: unknown, ms?: number, ...args: unknown[]) {
+    return typeof cb === 'function' ? st(guard(cb, args) as TimerHandler, ms) : st(cb as TimerHandler, ms, ...args);
+  };
+  (window as any).setInterval = function setInterval(cb: unknown, ms?: number, ...args: unknown[]) {
+    return typeof cb === 'function' ? si(guard(cb, args) as TimerHandler, ms) : si(cb as TimerHandler, ms, ...args);
+  };
+
+  onHold(level => {
+    held = level >= 1;
+    timersHeld = level >= 2;
+    if (!timersHeld && later.size) {
+      const due = [...later.values()];
+      later.clear();
+      for (const f of due) st(f, 0);
+    }
+    if (held) return;
+    real.clear();
+    for (const [id, cb] of waiting) real.set(id, raf(cb));
+    waiting.clear();
+  });
+}
+
+contextBridge.executeInMainWorld({ func: installGpuProbe, args: [
+  (draws: number) => ipcRenderer.send('habitab:draws', draws),
+  (cb: (level: number) => void) => { ipcRenderer.on('habitab:hold-frames', (_e, level: number | boolean) => cb(Number(level) || 0)); },
+] });
+
 if (process.platform === 'darwin') {
   contextBridge.executeInMainWorld({ func: installShare, args: [(json: string) => ipcRenderer.invoke('habitab:share', json)] });
 }

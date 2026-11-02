@@ -10,7 +10,7 @@ const SOURCES = {
 
 api.onState(state => {
   const s = state.sessions.find(x => x.id === state.selected);
-  document.body.classList.toggle('framed', !!(s?.nav?.emulation || s?.nav?.fixedSize));
+  document.body.classList.toggle('framed', !!s?.nav?.emulation);
   const meta = $('meta');
   meta.replaceChildren();
   $('b').style.display = 'none';

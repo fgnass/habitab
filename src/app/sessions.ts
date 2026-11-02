@@ -4,6 +4,7 @@
 // an optional docked DevTools view and a CDP proxy. Partitions live in
 // memory, except for projects with a persistent profile (on disk).
 import crypto from 'node:crypto';
+import { gpuTimeNs } from './gpu';
 import { app, BaseWindow, Menu, MenuItemConstructorOptions, session as electronSession, shell, WebContents, WebContentsView, clipboard } from 'electron';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -64,11 +65,20 @@ export interface Emulation {
   applied?: string;
 }
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+/** A tab is busy above GPU_BUSY_MS (ms/s), calm again below 40 % of it (see gpuCheck). The tests use lower limits: macOS gives their hidden app less GPU time. */
+const GPU_BUSY_MS = Number(process.env.HABITAB_GPU_BUSY_MS) || 250;
+/** A tab whose share stays above this (ms/s) for GPU_PAUSE_AFTER ms gets paused (see gpuCheck). */
+const GPU_PAUSE_MS = Number(process.env.HABITAB_GPU_PAUSE_MS) || 500;
+const GPU_PAUSE_AFTER = Number(process.env.HABITAB_GPU_PAUSE_AFTER_MS) || 15_000;
+
+/** The GPU load the UI shows: percent of the GPU in steps of 10 while the tab is busy, else 0. */
+export const gpuShown = (t: Tab) => t.gpuBusy ? Math.min(100, Math.max(10, Math.round((t.gpu ?? 0) / 100) * 10)) : 0;
+
 export interface Tab {
   id: number;
   view: WebContentsView;
   targetId: string;
-  fixedSize?: { width: number; height: number };
   emulation?: Emulation;
   /** Where the emulated page sits inside the content area (for the resize handles). */
   frame?: { x: number; y: number; width: number; height: number; scale: number };
@@ -82,6 +92,29 @@ export interface Tab {
   /** The tab's renderer process uses much CPU (see cpuCheck); `cpuSamples` counts towards a change. */
   busy?: boolean;
   cpuSamples?: number;
+  /** Draw calls of the page in its last report (page-preload.ts), and when that came. */
+  draws?: number;
+  drawsAt?: number;
+  /** The tab's share of the GPU load in ms per second (see gpuCheck), and when it was found. */
+  gpu?: number;
+  gpuAt?: number;
+  /** The page loads the GPU much (see gpuCheck). */
+  gpuBusy?: boolean;
+  /** Until then the page's draw reports do not count: it held its frames (see gpuCheck). */
+  holdUntil?: number;
+  /** Since then the tab's share is above the pause limit, in that many measurements in a row (see gpuCheck). */
+  gpuSince?: number;
+  gpuHits?: number;
+  /** Habitab paused the page (too much GPU load); the share it had in percent. */
+  gpuPaused?: number;
+  /** How hard: 1 animation frames, 2 also timers, 3 renderer stopped (see escalateGpu); since when. */
+  gpuLevel?: number;
+  gpuLevelAt?: number;
+  /** Draw calls the page still made while paused (last report), and when. */
+  pausedDraws?: number;
+  pausedDrawsAt?: number;
+  /** The user let the paused page run again: no pause until the next page loads. */
+  gpuAllowed?: boolean;
   /** Small JPEG of the tab for the sidebar (data URL). */
   thumb?: string;
   thumbTimer?: NodeJS.Timeout;
@@ -287,7 +320,7 @@ interface SavedSession {
   /** Steps with `tab` as the index into `tabs` (tab ids change with an app restart). */
   timeline?: Step[];
   uses?: number;
-  tabs: { url: string; active: boolean; usedAt?: number; fixedSize?: Tab['fixedSize']; emulation?: Omit<Emulation, 'by' | 'scale' | 'applied'>; own?: boolean }[];
+  tabs: { url: string; active: boolean; usedAt?: number; emulation?: Omit<Emulation, 'scale' | 'applied' | 'cut'>; own?: boolean }[];
   /** Only for in-memory partitions; a persistent profile has its cookies on disk. */
   cookies?: Electron.Cookie[];
 }
@@ -543,19 +576,18 @@ export class SessionManager {
           return true;
         },
         tabSize: targetId => {
-          const b = s.tabs.find(x => x.targetId === targetId)?.view.getBounds();
+          const t = s.tabs.find(x => x.targetId === targetId);
+          // The agent's size counts as the window size (resize_page reads it back).
+          const b = t?.emulation?.by === 'agent' ? t.emulation : t?.view.getBounds();
           return { width: b?.width ?? 0, height: b?.height ?? 0 };
         },
         agentInput: (targetId, delta) => {
           const t = s.tabs.find(x => x.targetId === targetId);
           if (t) { t.agentInputs = Math.max(0, t.agentInputs + delta); t.agentInputAt = Date.now(); }
         },
-        resizeTab: (targetId, width, height) => {
+        resizeTab: async (targetId, width, height) => {
           const t = s.tabs.find(x => x.targetId === targetId);
-          if (!t) return;
-          if (t.emulation) this.emulate(t, null);
-          t.fixedSize = { width, height };
-          this.onLayout(); this.onChange();
+          if (t) await this.agentSize(t, width, height);
         },
         agentUse: targetId => {
           const t = s.tabs.find(x => x.targetId === targetId);
@@ -584,7 +616,6 @@ export class SessionManager {
           t.emulation = p && p.width > 0 && p.height > 0
             ? { width: p.width, height: p.height, dpr: p.deviceScaleFactor ?? 0, mobile: !!p.mobile, zoom: p.scale ?? 1, scale: p.scale ?? 1, by: 'agent' }
             : undefined;
-          if (t.emulation) t.fixedSize = undefined;
           this.onLayout(); this.onChange();
         },
       });
@@ -670,7 +701,13 @@ export class SessionManager {
       } as any;
     });
     wc.on('page-title-updated', () => this.onChange());
-    wc.on('did-navigate', () => { this.setTargetUrl(tab, ''); this.onChange(); });
+    wc.on('did-navigate', () => {
+      this.setTargetUrl(tab, '');
+      // A new page runs its animation (page-preload.ts starts without a hold).
+      tab.gpuPaused = tab.gpuSince = tab.gpuLevel = tab.pausedDraws = undefined;
+      tab.gpuAllowed = false;
+      this.onChange();
+    });
     // A new document starts with no problems, like the console without "Preserve log".
     wc.on('did-start-navigation', e => { if (e.isMainFrame && !e.isSameDocument && tab.problems.length) { tab.problems = []; this.onChange(); } });
     // What the console shows as an error, no more (not cache misses or cancelled loads).
@@ -703,7 +740,7 @@ export class SessionManager {
     s.ctx ??= targetInfo.browserContextId;
     if (s.launch.viewport) {
       const [w, h] = s.launch.viewport.split('x').map(Number);
-      if (w && h) tab.fixedSize = { width: w, height: h };
+      if (w && h) void this.agentSize(tab, w, h);
     }
     s.tabs.push(tab);
     this.fixSelection();
@@ -978,9 +1015,15 @@ export class SessionManager {
         : `Screenshots of the marked ${part}s, in their order (look at them with your file reading tool):\n${files.map((file, i) => `${i + 1}. ${file}`).join('\n')}`,
       'Act on it and report in your session as usual; the user sends more feedback on their own.',
     ].filter(Boolean).join('\n');
-    if (target === 'codex') void this.codex.push(s.codexThread!, content, files);
-    else s.line!.send({ type: 'feedbackPush', content });
+    this.pushToAgent(s, content, files);
     return 'pushed';
+  }
+
+  /** A message to the session's agent: Codex through the app-server daemon, Claude Code through the inbox socket; else nothing. */
+  pushToAgent(s: Session, content: string, files: string[] = []): boolean {
+    if (s.codexThread) { void this.codex.push(s.codexThread, content, files); return true; }
+    if (s.line && canPush(s.meta)) { s.line.send({ type: 'feedbackPush', content }); return true; }
+    return false;
   }
 
   /** Silences or unmutes the audio of all tabs of the session, also the ones opened later. */
@@ -1088,10 +1131,10 @@ export class SessionManager {
       if (s.ended && !s.pinned) continue;
       const live = s.tabs.filter(t => !t.view.webContents.isDestroyed());
       const tabs = live.map(t => {
-        const e = t.emulation?.by === 'user' ? t.emulation : undefined;
+        const e = t.emulation;
         return {
-          url: t.view.webContents.getURL(), active: t === s.active, usedAt: t.usedAt, fixedSize: t.fixedSize, own: t.own,
-          emulation: e && { width: e.width, height: e.height, dpr: e.dpr, mobile: e.mobile, zoom: e.zoom, preset: e.preset, fillWidth: e.fillWidth, fillHeight: e.fillHeight },
+          url: t.view.webContents.getURL(), active: t === s.active, usedAt: t.usedAt, own: t.own,
+          emulation: e && { width: e.width, height: e.height, dpr: e.dpr, mobile: e.mobile, zoom: e.zoom, preset: e.preset, fillWidth: e.fillWidth, fillHeight: e.fillHeight, by: e.by },
         };
       });
       let cookies: Electron.Cookie[] | undefined;
@@ -1153,9 +1196,13 @@ export class SessionManager {
       for (const step of steps) if (step.tab === t.index) s.timeline.push({ ...step, tab: tab.id });
       if (i === 0) tab.view.webContents.loadURL(t.url).catch(() => {});
       if (t.usedAt !== undefined) tab.usedAt = t.usedAt;
-      if (t.fixedSize) tab.fixedSize = t.fixedSize;
       if (t.own) tab.own = true;
-      if (t.emulation) this.emulate(tab, t.emulation);
+      // Older saves have the agent's size as fixedSize.
+      const fixed = (t as { fixedSize?: { width: number; height: number } }).fixedSize;
+      if (t.emulation?.by === 'agent' || (!t.emulation && fixed)) {
+        const e = t.emulation ?? { ...fixed!, dpr: 0, mobile: false, zoom: 1 };
+        void this.agentSize(tab, e.width, e.height, e.dpr, e.mobile, typeof e.zoom === 'number' ? e.zoom : 1);
+      } else if (t.emulation) this.emulate(tab, t.emulation);
       if (t.active) s.active = tab;
     }
     s.timeline.sort((a, b) => a.id - b.id);
@@ -1324,12 +1371,26 @@ export class SessionManager {
     } else {
       // No `scale` yet: the next layout computes it and sends the override.
       tab.emulation = { ...e, by: 'user', scale: undefined, applied: undefined };
-      tab.fixedSize = undefined;
       void this.cdp(tab, 'Emulation.setTouchEmulationEnabled', { enabled: e.mobile, maxTouchPoints: 5 });
       void this.cdp(tab, 'Emulation.setEmitTouchEventsForMouse', { enabled: e.mobile, configuration: 'mobile' });
     }
     this.onLayout();
     this.onChange();
+  }
+
+  /**
+   * Sets the agent's size for a tab (resize_page, --viewport): responsive mode
+   * with this exact viewport, as with the agent's own emulation.
+   */
+  async agentSize(tab: Tab, width: number, height: number, dpr = 0, mobile = false, scale = 1): Promise<void> {
+    tab.emulation = { width, height, dpr, mobile, zoom: scale, scale, by: 'agent' };
+    this.onLayout();
+    this.onChange();
+    await Promise.all([
+      this.cdp(tab, 'Emulation.setTouchEmulationEnabled', { enabled: false }),
+      this.cdp(tab, 'Emulation.setEmitTouchEventsForMouse', { enabled: false }),
+      this.cdp(tab, 'Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dpr, mobile, scale }),
+    ]);
   }
 
   /**
@@ -1479,6 +1540,176 @@ export class SessionManager {
         t.cpuSamples = 0;
         this.onChange();
       }
+    }
+  }
+
+  /** A page's draw calls of the last second (page-preload.ts). */
+  drawReport(webContentsId: number, draws: number): void {
+    const tab = this.tabOf(webContentsId);
+    if (!tab || !Number.isFinite(draws)) return;
+    // The page draws less while it holds its frames for gpuCheck, and not at all while paused.
+    if (tab.gpuPaused) { tab.pausedDraws = draws; tab.pausedDrawsAt = Date.now(); draws = 0; }
+    else if (Date.now() < (tab.holdUntil ?? 0)) { tab.drawsAt = Date.now(); return; }
+    tab.draws = draws;
+    tab.drawsAt = Date.now();
+  }
+
+  private gpuChecking = false;
+
+  /**
+   * Which tab loads the GPU. All tabs share Chromium's GPU process, and only
+   * its GPU time as a whole is known (gpu.ts). With one drawing tab, the load
+   * is that tab's. With more and a high load, one of them at a time holds its
+   * animation frames for a moment (each one every 15 s at most); what the
+   * load goes down by (against the load before and after) is its share. A
+   * share is shown until a newer one is found (30 s at most). A tab is busy
+   * above 250 ms/s (a quarter of the GPU) and calm again below 100 ms/s.
+   * A share above 500 ms/s for 15 s (and in two measurements at least)
+   * pauses the page's animation (pauseGpu).
+   * Called every few seconds; a check takes up to 4 s.
+   */
+  async gpuCheck(): Promise<void> {
+    if (this.gpuChecking) return;
+    this.gpuChecking = true;
+    try { await this.gpuCheckOnce(); } catch (e: any) { log(`gpuCheck: ${e.message}`); } finally { this.gpuChecking = false; }
+  }
+
+  private async gpuCheckOnce(): Promise<void> {
+    const now = Date.now();
+    const tabs = [...this.sessions.values()].flatMap(s => s.tabs).filter(t => t.view && !t.view.webContents.isDestroyed());
+    const drawing = tabs.filter(t => t.draws && now - (t.drawsAt ?? 0) < 3_000);
+    const set = (t: Tab, ms: number | undefined) => {
+      const before = gpuShown(t);
+      t.gpu = ms;
+      t.gpuAt = ms === undefined ? undefined : Date.now();
+      t.gpuHits = ms !== undefined && ms >= GPU_PAUSE_MS ? (t.gpuHits ?? 0) + 1 : 0;
+      const v = ms ?? 0;
+      if (t.gpuBusy ? v < GPU_BUSY_MS * 0.4 : v > GPU_BUSY_MS) t.gpuBusy = !t.gpuBusy;
+      return gpuShown(t) !== before;
+    };
+    let changed = false;
+    for (const t of tabs) {
+      if (!drawing.includes(t) || now - (t.gpuAt ?? 0) > 30_000) changed = set(t, undefined) || changed;
+      if (this.escalateGpu(t, now)) changed = true;
+    }
+    const pid = app.getAppMetrics().find(m => m.type === 'GPU')?.pid;
+    if (!drawing.length || !pid) { if (changed) this.onChange(); return; }
+    const load = async (ms: number) => {
+      const a = await gpuTimeNs(pid);
+      const t0 = Date.now();
+      await sleep(ms);
+      const b = await gpuTimeNs(pid);
+      return a === undefined || b === undefined ? undefined : (b - a) / 1e6 / ((Date.now() - t0) / 1000);
+    };
+    const all = await load(1000);
+    if (all === undefined) { if (changed) this.onChange(); return; }
+    if (process.env.HABITAB_GPU_TRACE) log(`gpu: ${Math.round(all)} ms/s; draws/s: ${drawing.map(t => `${t.view.webContents.getURL().slice(0, 80)} ${t.draws}`).join(', ')}`);
+    if (drawing.length === 1) {
+      changed = set(drawing[0], all) || changed;
+    } else if (all > GPU_BUSY_MS) {
+      // The tab with the oldest share, not again within 15 s (the freeze
+      // stops its animation for a moment), and not the tab the agent is
+      // sending input to right now.
+      const t = drawing.filter(t => !t.agentInputs && now - (t.gpuAt ?? 0) > 15_000).sort((a, b) => (a.gpuAt ?? 0) - (b.gpuAt ?? 0))[0];
+      if (t) {
+        const held = await this.holdingFrames(t, () => sleep(500).then(() => load(1000)));
+        // The load also afterwards: a page that stopped drawing meanwhile is no share of this tab.
+        await sleep(300);
+        const after = await load(1000);
+        if (held != null && after !== undefined) changed = set(t, Math.max(0, Math.min(all, after) - held)) || changed;
+        if (process.env.HABITAB_GPU_TRACE) log(`gpu: ${Math.round(all)} ms/s, ${Math.round(held ?? NaN)} while ${t.view.webContents.getURL().slice(0, 80)} holds its frames`);
+      }
+    } else {
+      for (const t of drawing) changed = set(t, undefined) || changed;
+    }
+    for (const t of drawing) {
+      if (t.gpuAllowed || (t.gpu ?? 0) < GPU_PAUSE_MS) { t.gpuSince = undefined; continue; }
+      t.gpuSince ??= now;
+      const page = this.pageOf(t.id);
+      // Two measurements at least: one wrong one does not stop a page.
+      if (page && now - t.gpuSince >= GPU_PAUSE_AFTER && (t.gpuHits ?? 0) >= 2) { this.pauseGpu(page.s, t); changed = true; }
+    }
+    if (changed) this.onChange();
+  }
+
+  /**
+   * The page has loaded the GPU too much for too long: its animation frames
+   * wait (page-preload.ts; the page shows its last frame) until it loads
+   * again or the user resumes it (resumeGpu). The agent gets a note.
+   */
+  pauseGpu(s: Session, tab: Tab): void {
+    const wc = tab.view.webContents;
+    tab.gpuPaused = gpuShown(tab) || 10;
+    tab.gpuLevel = 1;
+    tab.gpuLevelAt = Date.now();
+    tab.gpuSince = tab.gpu = tab.gpuAt = undefined;
+    tab.gpuHits = 0;
+    tab.gpuBusy = false;
+    tab.draws = 0;
+    wc.send('habitab:hold-frames', 1);
+    log(`gpu: paused ${wc.getURL()} (${tab.gpuPaused} %)`);
+    const title = wc.getTitle();
+    this.pushToAgent(s, [
+      'Note from Habitab (not from the user):',
+      `Habitab paused the animation of the page ${wc.getURL()}${title ? ` ("${title}")` : ''}. Its drawing used about ${tab.gpuPaused} % of the GPU for more than ${Math.round(GPU_PAUSE_AFTER / 1000)} s, which slows down the user's whole computer.`,
+      "While paused, the page's requestAnimationFrame callbacks wait (and its timers too, if it keeps drawing): the page shows its last frame, also in screenshots. It runs again when the page loads anew (reload or navigation), or when the user resumes it. If it still keeps drawing, Habitab stops the page.",
+      'Make the drawing cheaper before you go on: for example a lower resolution or pixel ratio, less work per pixel or vertex, fewer passes, or drawing only when something changes. Then reload the page and check that it runs without a high load.',
+    ].join('\n'));
+    this.onChange();
+  }
+
+  /**
+   * A paused page that still draws (10 calls a second or more, after the
+   * hold took effect): level 2 holds its timers too, level 3 stops its
+   * renderer (the tab is empty until it loads again) and tells the agent.
+   * Pages that draw from message events, workers or a loop of their own
+   * get past the first two levels.
+   */
+  private escalateGpu(tab: Tab, now: number): boolean {
+    const level = tab.gpuLevel ?? 0;
+    if (!tab.gpuPaused || level >= 3) return false;
+    // A report that covers the time after the last step only (reports come once a second).
+    if ((tab.pausedDraws ?? 0) < 10 || (tab.pausedDrawsAt ?? 0) < (tab.gpuLevelAt ?? 0) + 1_100 || now - (tab.pausedDrawsAt ?? 0) > 2_500) return false;
+    const wc = tab.view.webContents;
+    tab.gpuLevel = level + 1;
+    tab.gpuLevelAt = now;
+    tab.pausedDraws = 0;
+    if (tab.gpuLevel === 2) {
+      wc.send('habitab:hold-frames', 2);
+      log(`gpu: holds the timers of ${wc.getURL()} too`);
+      return true;
+    }
+    const url = wc.getURL(), title = wc.getTitle();
+    log(`gpu: stops ${url}`);
+    wc.forcefullyCrashRenderer();
+    const page = this.pageOf(tab.id);
+    if (page) this.pushToAgent(page.s, [
+      'Note from Habitab (not from the user):',
+      `Habitab stopped the page ${url}${title ? ` ("${title}")` : ''}: it kept drawing and loading the GPU although its animation frames and timers were paused. The tab is empty until it loads again (reload or navigation).`,
+      'Find what keeps drawing (for example a loop driven by message events, a worker or a loop of its own) and make the drawing cheaper before you load the page again.',
+    ].join('\n'));
+    return true;
+  }
+
+  /** The user lets the paused page run again (a stopped one loads again); it is not paused again until it loads anew. */
+  resumeGpu(tab: Tab): void {
+    if (!tab.gpuPaused) return;
+    if (tab.gpuLevel === 3) { tab.view.webContents.reload(); return; }
+    tab.gpuPaused = tab.gpuLevel = undefined;
+    tab.gpuAllowed = true;
+    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.send('habitab:hold-frames', 0);
+    this.onChange();
+  }
+
+  /** Runs `fn` while the tab's page holds its animation frames (page-preload.ts). */
+  private async holdingFrames<T>(tab: Tab, fn: () => Promise<T>): Promise<T | undefined> {
+    const wc = tab.view.webContents;
+    tab.holdUntil = Infinity;
+    wc.send('habitab:hold-frames', true);
+    try { return await fn(); } finally {
+      // The page's next report still covers part of the hold.
+      tab.holdUntil = Date.now() + 1_200;
+      if (!wc.isDestroyed()) wc.send('habitab:hold-frames', false);
     }
   }
 

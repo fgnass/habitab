@@ -16,9 +16,6 @@ api.onState(state => {
   if (!editing) url.value = nav && nav.url !== 'about:blank' ? nav.url : '';
   $('reload').title = nav?.loading ? 'Stop loading' : 'Reload (⌘R)';
   $('reload').dataset.loading = nav?.loading ? '1' : '';
-  const size = nav?.fixedSize;
-  $('size').classList.toggle('hidden', !size);
-  if (size) $('sizeText').textContent = `${size.width}×${size.height}`;
   const live = s && s.phase !== 'ended' && s.phase !== 'kept';
   $('hold').classList.toggle('hidden', !live);
   // Shown while the agent waits for the user: continue in an own tab and let it go on.
@@ -44,6 +41,16 @@ api.onState(state => {
     $('debugger').title = paused
       ? "The agent's debugger is paused in this tab, so WebAssembly and audio worklets run at full speed. It comes back when the agent works in this tab. Click to turn it on now."
       : "This page uses a lot of CPU. The agent's debugger slows down WebAssembly and audio worklets. Click to pause it while you test (for all tabs of this project).";
+  }
+  // Habitab paused the page's animation for its GPU load.
+  $('gpu').classList.toggle('hidden', !nav?.gpuPaused);
+  if (nav?.gpuPaused) {
+    const icon = nav.gpuStopped ? 'rotate-cw' : 'play';
+    if ($('gpuIcon').dataset.name !== icon) { $('gpuIcon').replaceChildren(window.icon(icon)); $('gpuIcon').dataset.name = icon; }
+    $('gpuText').textContent = nav.gpuStopped ? 'Reload Page' : 'Resume Animation';
+    $('gpu').title = nav.gpuStopped
+      ? `Habitab stopped this page: it used about ${nav.gpuPaused} % of the GPU and kept drawing while paused. The agent got a note. Click to load it again.`
+      : `Habitab paused the animation of this page: it used about ${nav.gpuPaused} % of the GPU for a while, which slows down your computer. The agent got a note. Click to let it run again.`;
   }
   // Console errors of the page: the button opens the console, its context menu sends them.
   const n = nav?.newProblems ?? 0;
@@ -87,6 +94,6 @@ $('annotate').onclick = () => api.action('annotate');
 $('hold').onclick = () => api.action('hold');
 $('fork').onclick = () => api.action('fork');
 $('debugger').onclick = () => api.action('debugger');
+$('gpu').onclick = () => api.action('gpuResume');
 $('problems').onclick = () => api.action('problems');
 $('problems').oncontextmenu = e => { e.preventDefault(); api.action('problemsMenu', Math.round(e.clientX), Math.round(e.clientY)); };
-$('sizeReset').onclick = () => api.action('resetSize');

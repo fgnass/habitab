@@ -10,8 +10,6 @@
   button.wide { width: auto; padding: 0 9px; gap: 6px; display: flex; align-items: center; font-size: 12px; }
   #url { flex: 1; min-width: 120px; height: 28px; border: 0; outline: 0; border-radius: 7px; padding: 0 10px; background: var(--field); -webkit-user-select: text; user-select: text; }
   #url:focus { background: var(--page); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
-  .size { font-size: 11px; padding: 2px 4px 2px 8px; border-radius: 6px; background: var(--field); display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
-  .size button { width: 18px; height: 18px; font-size: 10px; }
   .hidden { display: none !important; }
   /* An agent waits for the user's feedback. */
   /* Without the sidebar the window buttons (traffic lights) sit on the top bar. */
@@ -22,6 +20,8 @@
   #holdText { font-variant-numeric: tabular-nums; }
   /* The page uses much CPU while the agent's debugger slows it down. */
   #debugger.busy { color: #b7791f; }
+  /* Habitab paused the page's animation (GPU load). */
+  #gpu { color: #b7791f; }
   /* Console errors of the page. */
   #problems { color: var(--red); }
   #problemsText { font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -31,8 +31,8 @@
 <button id="forward" title="Forward (⌘])"><span data-icon="chevron-right"></span></button>
 <button id="reload" title="Reload (⌘R)"><span data-icon="rotate-cw"></span></button>
 <input id="url" placeholder="Address or search" spellcheck="false">
-<span id="size" class="size hidden" title="Page size set by the agent"><span id="sizeText"></span><button id="sizeReset" title="Reset size"><span data-icon="x" class="small"></span></button></span>
 <button id="debugger" class="wide hidden"><span id="debuggerIcon"></span><span id="debuggerText"></span></button>
+<button id="gpu" class="wide hidden"><span id="gpuIcon"></span><span id="gpuText"></span></button>
 <button id="problems" class="wide hidden"><span data-icon="circle-alert"></span><span id="problemsText"></span></button>
 <button id="hold" class="wide" title="Hold the agent's new tool calls (⇧⌘P)"><span data-icon="hand"></span><span id="holdText">Take Control</span></button>
 <button id="fork" class="wide hidden" title="Open this page in your own tab: the agent goes on here (⇧⌘O)"><span data-icon="copy-plus"></span><span>Own Tab</span></button>

@@ -27,7 +27,8 @@ export interface ProxyHooks {
   createTab: (url: string) => Promise<string>;
   closeTab: (targetId: string) => Promise<boolean>;
   tabSize: (targetId: string) => { width: number; height: number };
-  resizeTab: (targetId: string, width: number, height: number) => void;
+  /** The agent's size for a tab: shown in responsive mode, applied before the answer. */
+  resizeTab: (targetId: string, width: number, height: number) => Promise<void>;
   /** Agent input (Input.*) to a tab starts (+1) or got its answer (-1). */
   agentInput: (targetId: string, delta: 1 | -1) => void;
   /** The agent set (params) or cleared (null) device emulation of a tab. */
@@ -281,7 +282,7 @@ export class SessionProxy {
           case 'Browser.setContentsSize': {
             const t = windowIds.get(params.windowId);
             if (!t) return fail(id, 'Browser window not found', sessionId);
-            h.resizeTab(t, params.width, params.height);
+            await h.resizeTab(t, params.width, params.height);
             return reply(id, {}, sessionId);
           }
         }

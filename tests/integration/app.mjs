@@ -23,6 +23,11 @@ const env = bridgeEnv(tmp, {
   ...(process.env.HABITAB_TEST_VISIBLE ? { HABITAB_TEST_VISIBLE: process.env.HABITAB_TEST_VISIBLE } : {}),
   HABITAB_AUTO_RESUME_MS: '2500',
   HABITAB_DOWNLOADS: path.join(tmp, 'downloads'),
+  // Lower GPU limits: macOS gives the hidden test app less GPU time. The
+  // heavy page of the GPU test is paused after the load per tab was checked.
+  HABITAB_GPU_BUSY_MS: '150',
+  HABITAB_GPU_PAUSE_MS: '150',
+  HABITAB_GPU_PAUSE_AFTER_MS: '25000',
 });
 // Fake Claude Code inbox socket (cross-session messaging): feedback notes arrive here.
 const inboxPath = path.join(tmp, 'inbox.sock');
@@ -89,6 +94,30 @@ const page = http.createServer((req, res) => {
   res.setHeader('content-type', 'text/html; charset=utf-8');
   // About 80 % of a core, like a busy audio app.
   if (req.url === '/busy') return res.end('<title>Busy</title><script>setInterval(() => { const end = performance.now() + 80; while (performance.now() < end); }, 100)</script>');
+  // WebGL drawing, heavy or light: a full-size quad with a long or a short loop in its fragment shader.
+  // A timer draws, not requestAnimationFrame: the test window may be hidden.
+  const gl = req.url.match(/^\/gpu-(heavy|light)/)?.[1];
+  if (gl) return res.end(`<title>GPU ${gl}</title><canvas width=1024 height=1024></canvas><script>
+    const gl = document.querySelector('canvas').getContext('webgl2');
+    const sh = (t, src) => { const s = gl.createShader(t); gl.shaderSource(s, '#version 300 es\\nprecision highp float;\\n' + src); gl.compileShader(s); return s; };
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, 'in vec2 v; void main() { gl_Position = vec4(v, 0, 1); }'));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, 'out vec4 o; void main() { float a = 0.; for (int i = 0; i < ${gl === 'heavy' ? 400 : 1}; i++) a += sin(gl_FragCoord.x * float(i) * .01); o = vec4(a); }'));
+    gl.linkProgram(p); gl.useProgram(p);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    window.drawn = 0;
+    const draw = () => { gl.drawArrays(gl.TRIANGLES, 0, 3); window.drawn++; };
+    const frame = () => { draw(); requestAnimationFrame(frame); };
+    // ?timer: from setInterval; ?channel: from message events (neither waits for frames).
+    if (location.search.includes('timer')) setInterval(draw, 16);
+    else if (location.search.includes('channel')) {
+      const ch = new MessageChannel();
+      let last = 0;
+      ch.port1.onmessage = () => { if (performance.now() - last > 16) { last = performance.now(); draw(); } ch.port2.postMessage(0); };
+      ch.port2.postMessage(0);
+    } else requestAnimationFrame(frame);</script>`);
   if (req.url === '/api/fail') { res.statusCode = 500; return res.end('fail'); }
   // A page with problems: a console error (twice), an uncaught exception and a failed request.
   if (req.url === '/broken') return res.end(`<title>Broken</title><h1 id=h>Broken</h1><script>
@@ -185,6 +214,9 @@ await a.tool('select_page', { pageId: pa2 });
 await a.tool('resize_page', { pageId: pa2, width: 820, height: 600 });
 const vp = (await a.tool('evaluate_script', { pageId: pa2, function: '() => innerWidth + "x" + innerHeight' })).text.match(/\d+x\d+/)?.[0];
 check(vp === '820x600', 'resize_page sets exact viewport', vp);
+await a.tool('select_page', { pageId: pa2, bringToFront: true });
+const rsz = (await state()).sessions.find(s => s.id === sa.id).nav.emulation;
+check(rsz?.by === 'agent' && rsz.width === 820 && rsz.height === 600, 'resize_page shows in the responsive mode bar', JSON.stringify(rsz));
 
 // Status bubble: the hovered link's URL (of that tab; the user sees it on the active tab)
 const alphaTab = async () => (await state()).sessions.find(s => s.id === sa.id).tabs.find(t => t.url.endsWith('/alpha'));
@@ -656,6 +688,17 @@ check((await viewport())?.[0] === 868, 'dragging the right handle changes the wi
   const mouse = await input();
   check(!mouse.coarse && mouse.hover && mouse.points === 0 && !mouse.events.includes('touchstart') && (await state()).sessions.find(s => s.id === sb.id).nav.emulation.width === 868, 'mouse: fine pointer with hover again, the size stays', JSON.stringify(mouse));
 }
+// The agent's size: no preset is on, even one that matches; the fill preset then fills both dimensions again
+await b.tool('resize_page', { pageId: pb, width: 768, height: 500 });
+await sleep(500);
+const presetsOn = async () => (await uiEval('responsive', `[...document.getElementById('bps').children].filter(x => x.classList.contains('on')).length`))?.result;
+check((await state()).sessions.find(s => s.id === sb.id).nav.emulation.by === 'agent' && (await presetsOn()) === 0, 'the agent\'s size lights no preset', JSON.stringify(await presetsOn()));
+await control(`ui responsive document.getElementById('bps').lastElementChild.click()`);
+await sleep(500);
+{
+  const e = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
+  check(e.by === 'user' && e.fillWidth && e.fillHeight && (await presetsOn()) === 1, 'the fill preset fills width and height after the agent\'s size', JSON.stringify(e));
+}
 await control(`action ${sb.id} emulate {"preset":"iphone-se","width":375,"height":667,"dpr":2,"mobile":true}`);
 await sleep(500);
 let vpa = await viewport();
@@ -789,6 +832,72 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
   const ev = await d.tool('evaluate_script', { pageId: await pageId(d), function: '() => 6 * 7' });
   check(ev.text.includes('42') && !(await front()).debuggerPaused, 'the agent continues after the pause', ev.text.slice(0, 80));
   await d.close();
+}
+
+// GPU load per tab: two agents draw WebGL, only the heavy one shows a GPU load.
+{ const heavy = client('gpu-heavy'), light = client('gpu-light');
+  await heavy.initialize(); await light.initialize();
+  await heavy.tool('navigate_page', { pageId: await pageId(heavy), url: `${base}/gpu-heavy` });
+  await light.tool('navigate_page', { pageId: await pageId(light), url: `${base}/gpu-light` });
+  const front = async name => (await state()).sessions.find(s => s.projectPath.endsWith(name))?.tabs.find(t => t.active);
+  let h = 0;
+  for (let i = 0; i < 40 && !h; i++) { await sleep(500); h = (await front('gpu-heavy'))?.gpu ?? 0; }
+  // Both tabs are checked within a few seconds; the shares stay.
+  await sleep(7000);
+  h = (await front('gpu-heavy'))?.gpu ?? 0;
+  const l = (await front('gpu-light'))?.gpu ?? 0;
+  check(h > 0 && l === 0, 'the tab that loads the GPU shows its load, the light one none', JSON.stringify({ heavy: h, light: l }));
+  const rows = (await uiEval('sidebar', `JSON.stringify([...document.querySelectorAll('.card')].map(c => [c.querySelector('.title').textContent, c.querySelector('.meta .gpu')?.textContent ?? '']))`))?.result;
+  const labels = Object.fromEntries(JSON.parse(rows ?? '[]'));
+  check(labels['GPU heavy'] === `GPU ${h}%` && labels['GPU light'] === '', 'the sidebar shows the load on the tab\'s row', rows);
+  // Too much for too long: Habitab pauses the page's animation and tells the agent.
+  let paused = 0;
+  for (let i = 0; i < 80 && !paused; i++) { await sleep(500); paused = (await front('gpu-heavy'))?.gpuPaused ?? 0; }
+  check(paused > 0 && !(await front('gpu-light'))?.gpuPaused, 'a tab with a high GPU load for long gets paused, the light one not', String(paused));
+  const note = inboxLines.filter(l => l.type === 'user').map(l => l.message.content).find(t => t.includes('/gpu-heavy'));
+  check(!!note && note.includes('paused the animation') && !note.includes('/gpu-light'), 'the agent gets a note about the paused page', note?.slice(0, 160));
+  const frames = async () => Number((await heavy.tool('evaluate_script', { pageId: await pageId(heavy), function: '() => "frames=" + window.drawn' })).text.match(/frames=(\d+)/)?.[1]);
+  const f1 = await frames(); await sleep(600); const f2 = await frames();
+  check(f1 === f2, 'the paused page draws no frames', `${f1} ${f2}`);
+  const hs = (await state()).sessions.find(s => s.projectPath.endsWith('gpu-heavy'));
+  await control(`action ${hs.id} gpuResume`);
+  await sleep(600);
+  const f3 = await frames(); await sleep(600); const f4 = await frames();
+  check(!(await front('gpu-heavy'))?.gpuPaused && f4 > f3, 'Resume Animation lets the page draw again', `${f3} ${f4}`);
+  await heavy.tool('navigate_page', { pageId: await pageId(heavy), url: `${base}/z1` });
+  for (let i = 0; i < 20 && h; i++) { await sleep(500); h = (await front('gpu-heavy'))?.gpu ?? 0; }
+  check(h === 0, 'the load goes away when the page stops drawing');
+  await light.tool('navigate_page', { pageId: await pageId(light), url: `${base}/z1` });
+  await heavy.close(); await light.close();
+}
+
+// A paused page that keeps drawing: its timers wait too; one that gets past
+// that is stopped (gpupause pauses it as if its load were too high).
+{ const tm = client('gpu-timer'), ch = client('gpu-channel');
+  await tm.initialize(); await ch.initialize();
+  await tm.tool('navigate_page', { pageId: await pageId(tm), url: `${base}/gpu-light?timer` });
+  await ch.tool('navigate_page', { pageId: await pageId(ch), url: `${base}/gpu-light?channel` });
+  const sess = async name => (await state()).sessions.find(s => s.projectPath.endsWith(name));
+  const front = async name => (await sess(name))?.tabs.find(t => t.active);
+  const drawn = async name => { await control(`select ${(await sess(name)).id}`); return Number((await uiEval('page', 'window.drawn'))?.result); };
+  await sleep(1500);
+  await control(`gpupause ${(await sess('gpu-timer')).id}`);
+  await control(`gpupause ${(await sess('gpu-channel')).id}`);
+  let stopped = false;
+  for (let i = 0; i < 40 && !stopped; i++) { await sleep(500); stopped = !!(await front('gpu-channel'))?.gpuStopped; }
+  const ft = await front('gpu-timer');
+  const d1 = await drawn('gpu-timer'); await sleep(600); const d2 = await drawn('gpu-timer');
+  check(ft?.gpuPaused > 0 && !ft.gpuStopped && d1 > 0 && d1 === d2, 'a paused page that draws from timers: its timers wait too', `${d1} ${d2}`);
+  check(stopped, 'a page that keeps drawing while paused gets stopped');
+  const note = inboxLines.filter(l => l.type === 'user').map(l => l.message.content).find(t => t.includes('/gpu-light?channel') && t.includes('stopped the page'));
+  check(!!note, 'the agent gets a note about the stopped page', note?.slice(0, 160));
+  await control(`action ${(await sess('gpu-channel')).id} gpuResume`);
+  let back = false;
+  for (let i = 0; i < 20 && !back; i++) { await sleep(500); const f = await front('gpu-channel'); back = !!f && !f.gpuPaused && !f.gpuStopped; }
+  check(back, 'Reload Page loads the stopped page again, without a pause');
+  await tm.tool('navigate_page', { pageId: await pageId(tm), url: `${base}/z1` });
+  await ch.tool('navigate_page', { pageId: await pageId(ch), url: `${base}/z1` });
+  await tm.close(); await ch.close();
 }
 
 // Agents work in the background: the window never took focus by itself

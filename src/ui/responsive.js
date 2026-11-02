@@ -2,16 +2,16 @@
 const api = window.habitab;
 const $ = id => document.getElementById(id);
 
-// A phone (iPhone width), common breakpoints (min-width), and the full free width.
+// A phone (iPhone width), common breakpoints (min-width), and the whole free space.
 // The two ends show an icon, the breakpoints their name.
-const PRESETS = [[icon('smartphone'), 390, 'Phone: 390 px (iPhone)'], ...[['sm', 640], ['md', 768], ['lg', 1024], ['xl', 1280], ['2xl', 1536]].map(([n, w]) => [n, w, `${n}: ${w} px`]), [icon('move-horizontal'), null, 'Fill the free width']];
+const PRESETS = [[icon('smartphone'), 390, 'Phone: 390 px (iPhone)'], ...[['sm', 640], ['md', 768], ['lg', 1024], ['xl', 1280], ['2xl', 1536]].map(([n, w]) => [n, w, `${n}: ${w} px`]), [icon('move-horizontal'), null, 'Fill the free space']];
 
 for (const [label, width, title] of PRESETS) {
   const b = document.createElement('button');
   b.append(label);
   b.dataset.width = width ?? '';
   b.title = title;
-  b.onclick = () => emulate(width ? { preset: 'responsive', width, fillHeight: current?.fillHeight ?? true } : { preset: 'responsive', fillWidth: true });
+  b.onclick = () => emulate(width ? { preset: 'responsive', width, fillHeight: current?.fillHeight ?? true } : { preset: 'responsive', fillWidth: true, fillHeight: true });
   $('bps').appendChild(b);
 }
 
@@ -30,7 +30,9 @@ api.onState(state => {
   }
   $('mouse').classList.toggle('on', !e.mobile);
   $('touch').classList.toggle('on', !!e.mobile);
-  for (const b of $('bps').children) b.classList.toggle('on', b.dataset.width ? !e.fillWidth && e.width === Number(b.dataset.width) : !!e.fillWidth);
+  // A size set by the agent is none of the presets, even when it matches one: only the size fields show it.
+  const own = e.by !== 'agent';
+  for (const b of $('bps').children) b.classList.toggle('on', own && (b.dataset.width ? !e.fillWidth && e.width === Number(b.dataset.width) : !!(e.fillWidth && e.fillHeight)));
   // The page is shown smaller than its viewport: say by how much.
   const scale = e.zoom === 'fit' ? e.scale : e.zoom;
   const scaled = typeof scale === 'number' && Math.round(scale * 100) !== 100;

@@ -40,6 +40,7 @@ function thumbView(s, t) {
   if (img) box.appendChild(img);
   // Thumbnails only: the mark of the user's own tab sits on the thumbnail.
   if (t.own && state.sidebar === 'compact') box.appendChild(el('span', 'own badge')).appendChild(icon('user'));
+  if ((t.gpu || t.gpuPaused) && state.sidebar === 'compact') box.appendChild(el('span', 'gpu badge', t.gpuStopped ? 'Stopped' : t.gpuPaused ? 'Paused' : `${t.gpu}%`)).title = gpuText(t);
   return box;
 }
 
@@ -72,12 +73,22 @@ function cardView(s, t) {
   const meta = el('div', 'meta');
   meta.appendChild(el('span', 'host ellipsis', t.isBlank ? '' : host(t.url)));
   if (t.own) meta.appendChild(titled(icon('user'), 'Your own tab: the agent goes on while you use it'));
+  if (t.gpu || t.gpuPaused) {
+    const gpu = el('span', 'gpu', t.gpuStopped ? 'GPU stopped' : t.gpuPaused ? 'GPU paused' : `GPU ${t.gpu}%`);
+    gpu.title = gpuText(t);
+    meta.insertBefore(gpu, meta.firstChild.nextSibling);
+  }
   if (t.debuggerPaused) meta.appendChild(titled(icon('bug-off'), "Debugger paused: the agent's debugger is off in this tab until the agent works in it again"));
   info.appendChild(meta);
   card.appendChild(info);
   return card;
 }
 
+const gpuText = t => t.gpuStopped
+  ? `Habitab stopped this page: it used about ${t.gpuPaused}% of the GPU and kept drawing while paused. The agent got a note. Load it again in the top bar.`
+  : t.gpuPaused
+  ? `Habitab paused the animation of this page: it used about ${t.gpuPaused}% of the GPU for a while. The agent got a note. Resume it in the top bar.`
+  : `This page uses about ${t.gpu}% of the GPU for its drawing.`;
 const host = url => { try { const u = new URL(url); return u.host + (u.pathname === '/' ? '' : u.pathname); } catch { return url; } };
 function titled(svg, text) { const t = document.createElementNS('http://www.w3.org/2000/svg', 'title'); t.textContent = text; svg.appendChild(t); return svg; }
 
