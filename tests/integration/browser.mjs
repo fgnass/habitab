@@ -193,9 +193,12 @@ check(done && !heldResult.isError && heldResult.text.includes('7'), 'the call go
 check((await state()).sessions.find(s => s.id === sa.id).push === true, 'Claude Code bridge session can push feedback (inbox from the environment)');
 await control(`select ${sa.id}`);
 await sleep(300);
+// The first note after the submit (taking control above sent one of its own).
+const userNotes = () => inboxLines.filter(l => l.type === 'user');
+const notesBefore = userNotes().length;
 await control(`action ${sa.id} annotateSubmit {"rect": {"x": 0, "y": 0, "width": 200, "height": 100}, "text": "This heading please"}`);
-for (let i = 0; i < 50 && !inboxLines.some(l => l.type === 'user'); i++) await sleep(100);
-const note = inboxLines.find(l => l.type === 'user')?.message?.content ?? '';
+for (let i = 0; i < 50 && userNotes().length <= notesBefore; i++) await sleep(100);
+const note = userNotes()[notesBefore]?.message?.content ?? '';
 const notePng = note.match(/(\/\S+feedback-\d+\.png)/)?.[1];
 check(/This heading please/.test(note) && /Page: http/.test(note) && notePng && fs.existsSync(notePng), 'feedback reaches Claude Code as a note with the details and the image file', note.slice(0, 160).replace(/\n/g, ' | '));
 check(inboxLines.some(l => l.type === 'auth' && l.token === 'tok'), 'inbox message carries the token');
