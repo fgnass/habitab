@@ -69,6 +69,11 @@ Habitab.app (Electron)
      if it keeps drawing; if even that does not help, its renderer is
      stopped). The agent gets a note; Resume Animation (or Reload Page) in
      the top bar lets it run again, and a new page load starts it anew
+   • pages that do not respond: a renderer that uses most of a core gets a
+     tiny script; a page that does not answer within 5 s shows "Not
+     Responding · Stop Page" in the top bar and is stopped after 30 s (the
+     agent gets a note). Reload works on such a page (it is stopped first);
+     a stopped or crashed page shows Reload Page
    • persistent profile per project (optional): cookies, localStorage, IndexedDB,
      service workers and cache are stored on disk and survive app restarts; one
      live session uses the profile, parallel ones start with a copy of its cookies

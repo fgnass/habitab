@@ -20,6 +20,8 @@
   #holdText { font-variant-numeric: tabular-nums; }
   /* The page uses much CPU while the agent's debugger slows it down. */
   #debugger.busy { color: #b7791f; }
+  /* The page does not respond, or its renderer is gone. */
+  #page { color: var(--red); }
   /* Habitab paused the page's animation (GPU load). */
   #gpu { color: #b7791f; }
   /* Console errors of the page. */
@@ -32,6 +34,7 @@
 <button id="reload" title="Reload (⌘R)"><span data-icon="rotate-cw"></span></button>
 <input id="url" placeholder="Address or search" spellcheck="false">
 <button id="debugger" class="wide hidden"><span id="debuggerIcon"></span><span id="debuggerText"></span></button>
+<button id="page" class="wide hidden"><span id="pageIcon"></span><span id="pageText"></span></button>
 <button id="gpu" class="wide hidden"><span id="gpuIcon"></span><span id="gpuText"></span></button>
 <button id="problems" class="wide hidden"><span data-icon="circle-alert"></span><span id="problemsText"></span></button>
 <button id="hold" class="wide" title="Hold the agent's new tool calls (⇧⌘P)"><span data-icon="hand"></span><span id="holdText">Take Control</span></button>

@@ -29,6 +29,7 @@ const env = bridgeEnv(tmp, {
   HABITAB_GPU_BUSY_MS: '150',
   HABITAB_GPU_PAUSE_MS: '150',
   HABITAB_GPU_PAUSE_AFTER_MS: '25000',
+  HABITAB_HANG_STOP_MS: '6000',
 });
 // Fake Claude Code inbox socket (cross-session messaging): feedback notes arrive here.
 const inboxPath = path.join(tmp, 'inbox.sock');
@@ -119,6 +120,8 @@ const page = http.createServer((req, res) => {
       ch.port1.onmessage = () => { if (performance.now() - last > 16) { last = performance.now(); draw(); } ch.port2.postMessage(0); };
       ch.port2.postMessage(0);
     } else requestAnimationFrame(frame);</script>`);
+  // A page whose JavaScript gets stuck in a loop after 3 s.
+  if (req.url === '/hang') return res.end('<title>Hang</title><script>setTimeout(() => { for (;;); }, 3000)</script>');
   if (req.url === '/api/fail') { res.statusCode = 500; return res.end('fail'); }
   // A page with problems: a console error (twice), an uncaught exception and a failed request.
   if (req.url === '/broken') return res.end(`<title>Broken</title><h1 id=h>Broken</h1><script>
@@ -913,6 +916,26 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
   await tm.tool('navigate_page', { pageId: await pageId(tm), url: `${base}/z1` });
   await ch.tool('navigate_page', { pageId: await pageId(ch), url: `${base}/z1` });
   await tm.close(); await ch.close();
+}
+
+// A page that does not respond: it shows as such, Habitab stops it after a
+// while and tells the agent, Reload loads it again, the user can stop it.
+{ const hg = client('hang');
+  await hg.initialize();
+  await hg.tool('navigate_page', { pageId: await pageId(hg), url: `${base}/hang` });
+  const sess = async () => (await state()).sessions.find(s => s.projectPath.endsWith('/hang'));
+  const front = async () => (await sess())?.tabs.find(t => t.active);
+  const until = async (pred, n = 60) => { for (let i = 0; i < n; i++) { if (await pred()) return true; await sleep(500); } return false; };
+  check(await until(async () => (await front())?.hung), 'a page whose JavaScript does not respond shows as not responding');
+  check(await until(async () => (await front())?.gone), 'Habitab stops a page that does not respond for a while');
+  const notes = () => inboxLines.filter(l => l.type === 'user').map(l => l.message.content).filter(t => t.includes('/hang') && t.includes('stopped the page'));
+  check(notes().some(t => t.startsWith('Note from Habitab') && t.includes('Habitab stopped')), 'the agent gets a note about the stopped page', notes()[0]?.slice(0, 160));
+  await control(`action ${(await sess()).id} reload`);
+  check(await until(async () => { const f = await front(); return f && !f.gone && !f.hung && f.title === 'Hang'; }, 10), 'Reload loads the stopped page again');
+  check(await until(async () => (await front())?.hung), 'it does not respond again');
+  await control(`action ${(await sess()).id} stopPage`);
+  check(await until(async () => (await front())?.gone, 10) && notes().some(t => t.includes('The user stopped')), 'the user stops it; the agent gets a note');
+  await hg.close();
 }
 
 // Agents work in the background: the window never took focus by itself

@@ -68,6 +68,8 @@ export interface Emulation {
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 /** A tab is busy above GPU_BUSY_MS (ms/s), calm again below 40 % of it (see gpuCheck). The tests use lower limits: macOS gives their hidden app less GPU time. */
 const GPU_BUSY_MS = Number(process.env.HABITAB_GPU_BUSY_MS) || 250;
+/** A page that does not answer for this long (while its renderer is busy) gets stopped (see hangCheck). */
+const HANG_STOP_MS = Number(process.env.HABITAB_HANG_STOP_MS) || 30_000;
 /** A tab whose share stays above this (ms/s) for GPU_PAUSE_AFTER ms gets paused (see gpuCheck). */
 const GPU_PAUSE_MS = Number(process.env.HABITAB_GPU_PAUSE_MS) || 500;
 const GPU_PAUSE_AFTER = Number(process.env.HABITAB_GPU_PAUSE_AFTER_MS) || 15_000;
@@ -110,6 +112,11 @@ export interface Tab {
   /** How hard: 1 animation frames, 2 also timers, 3 renderer stopped (see escalateGpu); since when. */
   gpuLevel?: number;
   gpuLevelAt?: number;
+  /** The page does not answer (its JavaScript runs without end), since then; a check is on its way. */
+  hungSince?: number;
+  pinging?: boolean;
+  /** The page's renderer is gone (crashed or stopped, see stopPage): the tab is empty until it loads again. */
+  gone?: string;
   /** Draw calls the page still made while paused (last report), and when. */
   pausedDraws?: number;
   pausedDrawsAt?: number;
@@ -715,6 +722,7 @@ export class SessionManager {
       this.setTargetUrl(tab, '');
       // A new page runs its animation (page-preload.ts starts without a hold).
       tab.gpuPaused = tab.gpuSince = tab.gpuLevel = tab.pausedDraws = undefined;
+      tab.gone = tab.hungSince = undefined;
       tab.gpuAllowed = false;
       this.onChange();
     });
@@ -733,6 +741,16 @@ export class SessionManager {
     wc.on('found-in-page', (_e, r) => { if (r.finalUpdate) { tab.find = { active: r.activeMatchOrdinal, matches: r.matches }; this.onChange(); } });
     wc.on('input-event', (_e, input) => this.pageInput(s, tab, input.type));
     wc.on('destroyed', () => this.tabGone(s, tab));
+    // Chromium's own hang monitor (input without answer); hangCheck also finds pages without input.
+    wc.on('unresponsive', () => { tab.hungSince ??= Date.now(); this.onChange(); });
+    wc.on('responsive', () => { tab.hungSince = undefined; this.onChange(); });
+    wc.on('render-process-gone', (_e, d) => {
+      if (d.reason === 'clean-exit') return;
+      tab.gone = d.reason;
+      tab.hungSince = undefined;
+      log(`page gone (${d.reason}): ${wc.getURL()}`);
+      this.onChange();
+    });
 
     wc.debugger.attach('1.3');
     // Failed requests as the console reports them ("Failed to load resource: … 500"):
@@ -1543,6 +1561,7 @@ export class SessionManager {
       for (const t of s.tabs) {
         if (t.view.webContents.isDestroyed()) continue;
         const use = cpu.get(t.view.webContents.getOSProcessId()) ?? 0;
+        this.hangCheck(s, t, use);
         const change = t.busy ? use < 30 : use > 50;
         t.cpuSamples = change ? (t.cpuSamples ?? 0) + 1 : 0;
         if (t.cpuSamples < 3) continue;
@@ -1691,6 +1710,7 @@ export class SessionManager {
     }
     const url = wc.getURL(), title = wc.getTitle();
     log(`gpu: stops ${url}`);
+    tab.gone = 'stopped';
     wc.forcefullyCrashRenderer();
     const page = this.pageOf(tab.id);
     if (page) this.pushToAgent(page.s, [
@@ -1721,6 +1741,63 @@ export class SessionManager {
       tab.holdUntil = Date.now() + 1_200;
       if (!wc.isDestroyed()) wc.send('habitab:hold-frames', false);
     }
+  }
+
+  /**
+   * A page whose renderer uses most of a core may be stuck in its
+   * JavaScript: it gets a tiny script, and one that does not answer within
+   * 5 s counts as hung. A page hung for HANG_STOP_MS is stopped. A page
+   * paused in a debugger uses no CPU, so it is never asked.
+   */
+  private hangCheck(s: Session, tab: Tab, cpu: number): void {
+    const wc = tab.view.webContents;
+    if (tab.gone) return;
+    if (tab.hungSince && Date.now() - tab.hungSince >= HANG_STOP_MS) {
+      this.stopPage(s, tab, `its JavaScript did not respond for more than ${Math.round(HANG_STOP_MS / 1000)} s while it used a full CPU core (most likely a loop that does not end)`);
+      return;
+    }
+    if (tab.pinging || cpu < 80) return;
+    tab.pinging = true;
+    let answered = false;
+    const timer = setTimeout(() => {
+      tab.pinging = false;
+      if (answered || tab.gone || wc.isDestroyed()) return;
+      if (!tab.hungSince) { tab.hungSince = Date.now(); log(`page not responding: ${wc.getURL()}`); this.onChange(); }
+    }, 5_000);
+    wc.executeJavaScript('0').then(() => {
+      answered = true;
+      clearTimeout(timer);
+      tab.pinging = false;
+      if (tab.hungSince) { tab.hungSince = undefined; this.onChange(); }
+    }, () => {});
+  }
+
+  /**
+   * Ends the page's renderer: the tab is empty until it loads again (Reload
+   * Page in the top bar). The agent gets a note with the reason; `byUser`:
+   * the user stopped it.
+   */
+  stopPage(s: Session, tab: Tab, reason: string, byUser = false): void {
+    const wc = tab.view.webContents;
+    if (wc.isDestroyed() || tab.gone) return;
+    const url = wc.getURL(), title = wc.getTitle();
+    log(`stops ${url}: ${reason}`);
+    tab.hungSince = undefined;
+    tab.gone = 'stopped';
+    wc.forcefullyCrashRenderer();
+    this.pushToAgent(s, [
+      'Note from Habitab (not from the user):',
+      `${byUser ? 'The user stopped' : 'Habitab stopped'} the page ${url}${title ? ` ("${title}")` : ''}: ${reason}. The tab is empty until it loads again (reload or navigation).`,
+      'Find and fix the cause before you load the page again, so that it does not get stuck again.',
+    ].join('\n'));
+    this.onChange();
+  }
+
+  /** Reload that also works for a hung page: it is stopped first (its renderer would not answer). */
+  reload(s: Session, tab: Tab): void {
+    const wc = tab.view.webContents;
+    if (tab.hungSince) this.stopPage(s, tab, 'it did not respond, and the user reloaded it', true);
+    wc.reload();
   }
 
   setHold(s: Session, hold: boolean, auto = false): void {

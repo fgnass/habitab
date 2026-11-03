@@ -3,12 +3,14 @@ const $ = id => document.getElementById(id);
 const url = $('url');
 let editing = false;
 let resumeAt = 0, resumeTotal = 0, countdown;
+let lastNav;
 
 api.onState(state => {
   document.body.classList.toggle('no-sidebar', state.sidebar === 'hidden');
   $('sidebar').classList.toggle('on', state.sidebar !== 'full');
   const s = state.sessions.find(x => x.id === state.selected);
   const nav = s?.nav;
+  lastNav = nav;
   $('back').disabled = !nav?.canGoBack;
   $('forward').disabled = !nav?.canGoForward;
   $('reload').disabled = !nav;
@@ -41,6 +43,17 @@ api.onState(state => {
     $('debugger').title = paused
       ? "The agent's debugger is paused in this tab, so WebAssembly and audio worklets run at full speed. It comes back when the agent works in this tab. Click to turn it on now."
       : "This page uses a lot of CPU. The agent's debugger slows down WebAssembly and audio worklets. Click to pause it while you test (for all tabs of this project).";
+  }
+  // The page does not respond (stop it), or its renderer is gone (load it again). A GPU stop has its own button.
+  const hung = !!nav?.hung, gone = !!nav?.gone && !nav?.gpuPaused;
+  $('page').classList.toggle('hidden', !hung && !gone);
+  if (hung || gone) {
+    const icon = hung ? 'triangle-alert' : 'rotate-cw';
+    if ($('pageIcon').dataset.name !== icon) { $('pageIcon').replaceChildren(window.icon(icon)); $('pageIcon').dataset.name = icon; }
+    $('pageText').textContent = hung ? 'Not Responding · Stop Page' : 'Reload Page';
+    $('page').title = hung
+      ? 'The JavaScript of this page does not respond (most likely a loop that does not end). Habitab stops it after a while by itself. Click to stop it now; the agent gets a note.'
+      : 'This page stopped (its process ended). Click to load it again.';
   }
   // Habitab paused the page's animation for its GPU load.
   $('gpu').classList.toggle('hidden', !nav?.gpuPaused);
@@ -95,5 +108,6 @@ $('hold').onclick = () => api.action('hold');
 $('fork').onclick = () => api.action('fork');
 $('debugger').onclick = () => api.action('debugger');
 $('gpu').onclick = () => api.action('gpuResume');
+$('page').onclick = () => api.action(lastNav?.hung ? 'stopPage' : 'reload');
 $('problems').onclick = () => api.action('problems');
 $('problems').oncontextmenu = e => { e.preventDefault(); api.action('problemsMenu', Math.round(e.clientX), Math.round(e.clientY)); };

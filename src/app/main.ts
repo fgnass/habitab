@@ -333,7 +333,9 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     }
     case 'back': return s?.active?.view.webContents.navigationHistory.goBack();
     case 'forward': return s?.active?.view.webContents.navigationHistory.goForward();
-    case 'reload': return s?.active?.view.webContents.reload();
+    case 'reload': return s?.active && manager.reload(s, s.active);
+    // Top bar: the user stops the page that does not respond.
+    case 'stopPage': return s?.active && manager.stopPage(s, s.active, 'it did not respond, and the user stopped it', true);
     case 'stop': return s?.active?.view.webContents.stop();
     case 'devtools': return s && manager.toggleDevtools(s);
     case 'closeTab': {
@@ -1145,7 +1147,7 @@ function updateMenu(): void {
       { label: 'Show Sidebar', type: 'checkbox', checked: !prefs().sidebarHidden, accelerator: isMac ? 'Ctrl+Cmd+S' : 'Ctrl+Shift+S', click: toggleSidebarHidden },
       { label: 'Thumbnails Only', type: 'checkbox', checked: !!prefs().sidebarCompact, accelerator: 'CmdOrCtrl+Shift+B', click: toggleSidebarWidth },
       { type: 'separator' },
-      { label: 'Reload', accelerator: 'CmdOrCtrl+R', enabled: !!s?.active, click: () => s?.active?.view.webContents.reload() },
+      { label: 'Reload', accelerator: 'CmdOrCtrl+R', enabled: !!s?.active, click: () => s?.active && manager.reload(s, s.active) },
       { label: 'Reload Without Cache', accelerator: 'CmdOrCtrl+Shift+R', enabled: !!s?.active, click: () => s?.active?.view.webContents.reloadIgnoringCache() },
       // Linux: the browser keys (Ctrl+[ is hard to type on many layouts).
       { label: 'Back', accelerator: isMac ? 'Cmd+[' : 'Alt+Left', click: () => s?.active?.view.webContents.navigationHistory.goBack() },

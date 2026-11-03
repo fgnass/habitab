@@ -73,7 +73,11 @@ function cardView(s, t) {
   const meta = el('div', 'meta');
   meta.appendChild(el('span', 'host ellipsis', t.isBlank ? '' : host(t.url)));
   if (t.own) meta.appendChild(titled(icon('user'), 'Your own tab: the agent goes on while you use it'));
-  if (t.gpu || t.gpuPaused) {
+  if (t.hung || (t.gone && !t.gpuPaused)) {
+    const page = el('span', 'gpu', t.hung ? 'Not responding' : 'Stopped');
+    page.title = t.hung ? 'The JavaScript of this page does not respond. Stop it in the top bar.' : 'This page stopped. Load it again in the top bar.';
+    meta.insertBefore(page, meta.firstChild.nextSibling);
+  } else if (t.gpu || t.gpuPaused) {
     const gpu = el('span', 'gpu', t.gpuStopped ? 'GPU stopped' : t.gpuPaused ? 'GPU paused' : `GPU ${t.gpu}%`);
     gpu.title = gpuText(t);
     meta.insertBefore(gpu, meta.firstChild.nextSibling);

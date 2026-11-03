@@ -19,7 +19,7 @@ export function uiState(m: SessionManager) {
       const wc = t.view.webContents;
       const url = wc.getURL();
       return {
-        id: t.id, title: wc.getTitle(), url, loading: wc.isLoading(), active: t === s.active, inactive: !isActiveTab(s, t) && !gpuShown(t), debuggerPaused: !!t.debuggerPaused, busy: !!t.busy, gpu: gpuShown(t), gpuPaused: t.gpuPaused ?? 0, gpuStopped: t.gpuLevel === 3,
+        id: t.id, title: wc.getTitle(), url, loading: wc.isLoading(), active: t === s.active, inactive: !isActiveTab(s, t) && !gpuShown(t), debuggerPaused: !!t.debuggerPaused, busy: !!t.busy, gpu: gpuShown(t), gpuPaused: t.gpuPaused ?? 0, gpuStopped: t.gpuLevel === 3, hung: !!t.hungSince, gone: !!t.gone,
         isBlank: !url || url === 'about:blank', targetUrl: t.targetUrl ?? '',
         /** Console errors the user has not seen (badge); repeated ones count once per entry. */
         own: !!t.own,
@@ -61,7 +61,7 @@ export function uiState(m: SessionManager) {
       devtools: !!s.devtools,
       browser: !!s.ctx,
       tabs,
-      nav: awc ? { url: awc.getURL(), canGoBack: awc.navigationHistory.canGoBack(), canGoForward: awc.navigationHistory.canGoForward(), loading: awc.isLoading(), emulation: s.active?.emulation ?? null, targetUrl: s.active?.targetUrl ?? '', debuggerPaused: !!s.active?.debuggerPaused, busy: !!s.active?.busy, gpuPaused: s.active?.gpuPaused ?? 0, gpuStopped: s.active?.gpuLevel === 3, own: !!s.active?.own, frame: s.active?.emulation ? s.active.frame ?? null : null,
+      nav: awc ? { url: awc.getURL(), canGoBack: awc.navigationHistory.canGoBack(), canGoForward: awc.navigationHistory.canGoForward(), loading: awc.isLoading(), emulation: s.active?.emulation ?? null, targetUrl: s.active?.targetUrl ?? '', debuggerPaused: !!s.active?.debuggerPaused, busy: !!s.active?.busy, gpuPaused: s.active?.gpuPaused ?? 0, gpuStopped: s.active?.gpuLevel === 3, hung: !!s.active?.hungSince, gone: !!s.active?.gone, own: !!s.active?.own, frame: s.active?.emulation ? s.active.frame ?? null : null,
         // The front tab's console errors in full (texts shortened).
         problems: (s.active?.problems ?? []).map(p => ({ ...p, text: p.text.slice(0, 600) })),
         newProblems: s.active ? newProblems(s, s.active) : 0,
