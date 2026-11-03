@@ -86,7 +86,12 @@ Habitab.app (Electron)
    • take control: a click in a page holds the agent's next commands (key
      presses only after a click since you came back to Habitab, so Cmd+Tab
      does not count); it goes on after 10 s without input, when you switch
-     to another app, or on Resume
+     to another app, or on Resume. Only the agent's actions wait (click,
+     type, navigate, script, screenshot, snapshot, emulation;
+     shared/agent-actions.ts), the server's own bookkeeping goes on. When an
+     action begins to wait, the agent gets a note (Claude Code inbox, Codex) that the user has
+     control and that it must not debug the delay; a command that waits 30 s
+     fails with an error that says the same (for every client)
    • app restart: sessions whose server still runs, and pinned ones, come back
      with their tabs, responsive settings and cookies (sessions.json); the
      server starts a new bridge with its next call, which rejoins the session
@@ -263,7 +268,7 @@ Habitab shows that and does not invent one.
 - Inactive ≠ ended: hidden sessions without activity are throttled by
   Chromium after 5 min; agent activity, running traces/screencasts and your
   use lift the throttling.
-- Take control (⇧⌘P): the agent's commands wait until you resume (max. 10 min).
+- Take control (⇧⌘P): the agent's commands wait until you resume (max. 10 min); a command that waits 30 s fails with the reason, and the agent gets a note.
 - Errors appear as a notice in the sidebar and in the log, never as a blocking dialog.
 
 Network: the app's debug port and the session proxies bind only to `127.0.0.1`. The socket is accessible only to your own user.

@@ -8,6 +8,8 @@
 // and readable ("Click", "Navigate"), not chrome-devtools-mcp's tool names;
 // two tools without a pause between them become one step ("Click, Snapshot").
 
+import { isAgentAction } from '../shared/agent-actions';
+
 export interface StepStart { tool: string; summary?: string }
 export interface StepEnd extends StepStart { durationMs: number; isError: boolean; detail?: string }
 
@@ -137,6 +139,7 @@ export class StepDetector {
 
   /** The readable name a command gives its step, or undefined for Puppeteer's bookkeeping. */
   private classify(c: Current, method: string, p: any, sessionId?: string): Name | undefined {
+    if (!isAgentAction(method)) return undefined;
     switch (method) {
       case 'Page.navigate': return { name: 'Navigate', weight: 10, summary: p.url };
       case 'Page.reload': return { name: 'Reload', weight: 10 };

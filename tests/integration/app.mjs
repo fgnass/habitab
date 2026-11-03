@@ -22,6 +22,7 @@ const tmp = fs.mkdtempSync(path.join(process.env.TEST_TMP ?? os.tmpdir(), 'hb-ap
 const env = bridgeEnv(tmp, {
   ...(process.env.HABITAB_TEST_VISIBLE ? { HABITAB_TEST_VISIBLE: process.env.HABITAB_TEST_VISIBLE } : {}),
   HABITAB_AUTO_RESUME_MS: '2500',
+  HABITAB_HELD_LIMIT_MS: '4000',
   HABITAB_DOWNLOADS: path.join(tmp, 'downloads'),
   // Lower GPU limits: macOS gives the hidden test app less GPU time. The
   // heavy page of the GPU test is paused after the load per tab was checked.
@@ -253,6 +254,7 @@ check((await a.tool('evaluate_script', { pageId: pa2, function: '() => 2' })).te
 await a.tool('select_page', { pageId: pa2 });
 
 // Human control: tool calls wait
+const notesAtHold = inboxLines.filter(l => l.type === 'user').length;
 await control(`hold ${sb.id} on`);
 await sleep(300);
 // The MCP server's own answers to page events (here a navigation by the user) are not the agent waiting
@@ -260,15 +262,28 @@ await control(`select ${sb.id}`);
 await control(`ui page location.reload()`);
 await sleep(1500);
 check(!(await state()).sessions.find(s => s.id === sb.id).waiting, "the MCP server's own commands after a user's navigation do not count as waiting");
+check(inboxLines.filter(l => l.type === 'user').length === notesAtHold, "the MCP server's own commands send the agent no note");
 let done = false;
+const holdNote = nextNote();
 const held = b.tool('evaluate_script', { pageId: pb, function: '() => 42' }).then(r => { done = true; return r; });
 await sleep(2000);
 check(!done, 'tool call waits while the human has control');
 check((await state()).sessions.find(s => s.id === sb.id).waiting, 'the app knows that the agent waits for the user');
+check(/user has taken control/.test((await holdNote).text), 'the agent gets a note that the user has control', (await holdNote).text.slice(0, 120));
+const notesBefore = inboxLines.filter(l => l.type === 'user').length;
 await control(`hold ${sb.id} off`);
 check((await held).text.includes('42') && done, 'tool call continues after release');
 await sleep(200);
 check(!(await state()).sessions.find(s => s.id === sb.id).waiting, 'after release the agent no longer waits');
+// A command that waits too long gets an error that names the cause; one note per hold
+await control(`hold ${sb.id} on`);
+const cancelled = await b.tool('evaluate_script', { pageId: pb, function: '() => 45' });
+const cancelledAgain = await b.tool('evaluate_script', { pageId: pb, function: '() => 46' });
+check(/user has taken control/.test(cancelled.text) && /do not debug/.test(cancelled.text) && !cancelled.text.includes('45'), 'a command that waits too long fails with the reason', cancelled.text.slice(0, 200));
+check(/user has taken control/.test(cancelledAgain.text), 'the next command waits and fails again', cancelledAgain.text.slice(0, 120));
+check(inboxLines.filter(l => l.type === 'user').length === notesBefore + 1, 'one note per hold, not one per command');
+await control(`hold ${sb.id} off`);
+check((await b.tool('evaluate_script', { pageId: pb, function: '() => 47' })).text.includes('47'), 'after release the agent works again');
 
 // Automatic control: agent input does not count, a user click does
 await a.tool('press_key', { pageId: pa2, key: 'Tab' });

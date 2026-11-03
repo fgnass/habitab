@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { WebSocket } from 'ws';
+import { isAgentAction } from '../shared/agent-actions';
 import { isSessionId, SessionMeta } from '../shared/ipc';
 import { log, openLog } from '../shared/paths';
 import { processExecutable, systemChrome } from '../shared/platform';
@@ -55,6 +56,9 @@ class BrowserBridge {
   private buffer: Buffer = Buffer.alloc(0);
   /** Messages for the app: the agent's work while the user has control, all before the connection is open. */
   private queue: string[] = [];
+  /** When each of the agent's commands began to wait for the user. */
+  private since = new Map<string, number>();
+  private expireTimer?: NodeJS.Timeout;
   private held = false;
   /** The app knows that the agent's commands wait for the user. */
   private waiting = false;
@@ -117,22 +121,58 @@ class BrowserBridge {
   }
 
   /**
-   * While the user has control, only the agent's work waits. Set-up commands
-   * go on: a tab that the user's click opened waits for the server's
-   * Runtime.runIfWaitingForDebugger before it loads its page.
+   * While the user has control, only the agent's actions wait. Everything
+   * else goes on: a tab that the user's click opened waits for the server's
+   * Runtime.runIfWaitingForDebugger before it loads its page, and the
+   * server's DevTools SDK answers the page's events by itself.
    */
   private flush(): void {
     const open = this.ws?.readyState === WebSocket.OPEN;
     const later: string[] = [];
     for (const m of this.queue) {
-      if (open && !(this.held && isAgentWork(m))) this.ws!.send(m);
-      else later.push(m);
+      if (open && !(this.held && isAgentWork(m))) { this.ws!.send(m); this.since.delete(m); }
+      else {
+        later.push(m);
+        if (this.held && isAgentWork(m) && !this.since.has(m)) {
+          if (!this.since.size) log(`waits for the user: ${/"method":"([^"]+)"/.exec(m)?.[1]}`);
+          this.since.set(m, Date.now());
+        }
+      }
     }
     this.queue = later;
-    this.setWaiting(this.held && later.some(isAgentWork));
+    this.setWaiting();
+    this.scheduleExpiry();
   }
 
-  private setWaiting(waiting: boolean): void {
+  /**
+   * A command that waits for the user too long gets an error that names the
+   * cause: the agent sees in the tool's result that the user has control, and
+   * does not look for a fault in the page.
+   */
+  private scheduleExpiry(): void {
+    clearTimeout(this.expireTimer);
+    if (!this.since.size) return;
+    const oldest = Math.min(...this.since.values());
+    this.expireTimer = setTimeout(() => this.expire(), Math.max(0, oldest + HELD_LIMIT_MS - Date.now())).unref();
+  }
+
+  private expire(): void {
+    const now = Date.now();
+    this.queue = this.queue.filter(m => {
+      const at = this.since.get(m);
+      if (at === undefined || now - at < HELD_LIMIT_MS) return true;
+      this.since.delete(m);
+      const reply = heldError(m, now - at);
+      log(`cancelled after ${Math.round((now - at) / 1000)} s (user has control): ${/"method":"([^"]+)"/.exec(m)?.[1]}`);
+      if (reply) this.toPipe(reply);
+      return false;
+    });
+    this.setWaiting();
+    this.scheduleExpiry();
+  }
+
+  private setWaiting(): void {
+    const waiting = this.held && this.queue.some(isAgentWork);
     if (this.waiting === waiting) return;
     this.waiting = waiting;
     this.link.send({ type: 'waiting', waiting });
@@ -167,15 +207,27 @@ class BrowserBridge {
   }
 }
 
-/**
- * The MCP server also sends commands by itself, as answers to events of the
- * page (a navigation, a new frame or worker): set-up and bookkeeping. Only
- * other commands are the agent's work, i.e. it waits for the user.
- */
-const BACKGROUND = /^(\w+\.(enable|disable)|Debugger\.\w+|Audits\.\w+|Autofill\.\w+|Storage\.getStorageKey|Runtime\.(runIfWaitingForDebugger|getIsolateId|releaseObject)|Target\.(setAutoAttach|setDiscoverTargets|attachToTarget|getTargets)|Page\.(getFrameTree|getResourceTree|setLifecycleEventsEnabled|addScriptToEvaluateOnNewDocument|createIsolatedWorld)|Network\.setAttachDebugStack|Log\.startViolationsReport|Emulation\.setFocusEmulationEnabled)$/;
+/** The agent's action (shared/agent-actions.ts): only that waits for the user; the server's bookkeeping goes on. */
 function isAgentWork(message: string): boolean {
-  const method = /"method":"([^"]+)"/.exec(message)?.[1];
-  return !!method && !BACKGROUND.test(method);
+  return isAgentAction(/"method":"([^"]+)"/.exec(message)?.[1]);
+}
+
+/** The agent's command waits this long for the user, then it gets an error (heldError). */
+export const HELD_LIMIT_MS = Number(process.env.HABITAB_HELD_LIMIT_MS) || 30_000;
+
+/**
+ * The CDP error for a command that waited too long while the user had
+ * control. Puppeteer puts the message into its error, and
+ * chrome-devtools-mcp into the tool's result.
+ */
+export function heldError(message: string, waitedMs: number): string | undefined {
+  let m: any;
+  try { m = JSON.parse(message); } catch { return; }
+  if (typeof m?.id !== 'number') return;
+  const text = `Habitab: the user has taken control of this browser to use the page. Your browser commands wait until the user gives control back; `
+    + `this one waited ${Math.round(waitedMs / 1000)} s and was cancelled. This is not a fault of the page, the browser or the tool: do not debug it. `
+    + `Wait a moment and try again, or continue with work that needs no browser.`;
+  return JSON.stringify({ id: m.id, ...(m.sessionId ? { sessionId: m.sessionId } : {}), error: { code: -32000, message: text } });
 }
 
 /** HABITAB_CDP_TRACE=1: every CDP message in the log (method, id, session, size), for measuring tool sequences. */

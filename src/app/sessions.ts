@@ -291,6 +291,8 @@ export interface Session {
   held: boolean;
   /** The bridge holds commands of the agent: it waits for the user. */
   waiting?: boolean;
+  /** The agent got the note that the user has control (once per hold). */
+  holdNoted?: boolean;
   /** Set while the user has control automatically; then it ends by itself. */
   autoResumeAt?: number;
   resumeTimer?: NodeJS.Timeout;
@@ -324,6 +326,12 @@ interface SavedSession {
   /** Only for in-memory partitions; a persistent profile has its cookies on disk. */
   cookies?: Electron.Cookie[];
 }
+
+/** To the agent when its browser commands begin to wait for the user. */
+export const HOLD_NOTE = 'Habitab: the user has taken control of your browser to use the page themselves. '
+  + 'Your browser commands wait until the user gives control back (Resume in Habitab, or by itself some seconds after the last input); '
+  + 'a command that waits too long gets an error that says so. A slow or failing browser tool call now has this cause, not a fault of the page, '
+  + 'the browser or the tool: do not debug it. Wait, or continue with work that needs no browser.';
 
 /** User input takes control automatically; this long without input gives it back. */
 const AUTO_RESUME_MS = Number(process.env.HABITAB_AUTO_RESUME_MS) || 10_000;
@@ -446,6 +454,8 @@ export class SessionManager {
         break;
       case 'waiting':
         s.waiting = !!m.waiting;
+        // Without a reason, the agent takes the slow tool call for a hanging page and debugs it.
+        if (s.waiting && s.held && !s.holdNoted) s.holdNoted = this.pushToAgent(s, HOLD_NOTE);
         break;
       case 'bye':
         s.endReason = m.reason;
@@ -1722,7 +1732,7 @@ export class SessionManager {
     }
     if (s.held !== hold) s.line?.send({ type: 'hold', hold });
     s.held = hold;
-    if (!hold) s.waiting = false;
+    if (!hold) s.waiting = s.holdNoted = false;
     this.onChange();
   }
 
