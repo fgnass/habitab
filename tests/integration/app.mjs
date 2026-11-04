@@ -272,7 +272,7 @@ const held = b.tool('evaluate_script', { pageId: pb, function: '() => 42' }).the
 await sleep(2000);
 check(!done, 'tool call waits while the human has control');
 check((await state()).sessions.find(s => s.id === sb.id).waiting, 'the app knows that the agent waits for the user');
-check(/user has taken control/.test((await holdNote).text), 'the agent gets a note that the user has control', (await holdNote).text.slice(0, 120));
+check(/not from the user.*user uses the browser/.test((await holdNote).text), 'the agent gets a note that the user has control', (await holdNote).text.slice(0, 120));
 const notesBefore = inboxLines.filter(l => l.type === 'user').length;
 await control(`hold ${sb.id} off`);
 check((await held).text.includes('42') && done, 'tool call continues after release');
@@ -282,8 +282,8 @@ check(!(await state()).sessions.find(s => s.id === sb.id).waiting, 'after releas
 await control(`hold ${sb.id} on`);
 const cancelled = await b.tool('evaluate_script', { pageId: pb, function: '() => 45' });
 const cancelledAgain = await b.tool('evaluate_script', { pageId: pb, function: '() => 46' });
-check(/user has taken control/.test(cancelled.text) && /do not debug/.test(cancelled.text) && !cancelled.text.includes('45'), 'a command that waits too long fails with the reason', cancelled.text.slice(0, 200));
-check(/user has taken control/.test(cancelledAgain.text), 'the next command waits and fails again', cancelledAgain.text.slice(0, 120));
+check(/user uses this browser/.test(cancelled.text) && /do not debug/.test(cancelled.text) && !cancelled.text.includes('45'), 'a command that waits too long fails with the reason', cancelled.text.slice(0, 200));
+check(/user uses this browser/.test(cancelledAgain.text), 'the next command waits and fails again', cancelledAgain.text.slice(0, 120));
 check(inboxLines.filter(l => l.type === 'user').length === notesBefore + 1, 'one note per hold, not one per command');
 await control(`hold ${sb.id} off`);
 check((await b.tool('evaluate_script', { pageId: pb, function: '() => 47' })).text.includes('47'), 'after release the agent works again');
@@ -929,7 +929,7 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
   check(await until(async () => (await front())?.hung), 'a page whose JavaScript does not respond shows as not responding');
   check(await until(async () => (await front())?.gone), 'Habitab stops a page that does not respond for a while');
   const notes = () => inboxLines.filter(l => l.type === 'user').map(l => l.message.content).filter(t => t.includes('/hang') && t.includes('stopped the page'));
-  check(notes().some(t => t.startsWith('Note from Habitab') && t.includes('Habitab stopped')), 'the agent gets a note about the stopped page', notes()[0]?.slice(0, 160));
+  check(notes().some(t => t.startsWith('Automatic note about your chrome-devtools-mcp browser') && t.includes('The browser stopped')), 'the agent gets a note about the stopped page', notes()[0]?.slice(0, 160));
   await control(`action ${(await sess()).id} reload`);
   check(await until(async () => { const f = await front(); return f && !f.gone && !f.hung && f.title === 'Hang'; }, 10), 'Reload loads the stopped page again');
   check(await until(async () => (await front())?.hung), 'it does not respond again');

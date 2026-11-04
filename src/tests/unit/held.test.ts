@@ -8,7 +8,7 @@ test('a command that waited for the user gets an error that names the cause', ()
   assert.equal(reply.id, 7);
   assert.equal(reply.sessionId, 'S1');
   assert.equal(reply.error.code, -32000);
-  assert.match(reply.error.message, /user has taken control/);
+  assert.match(reply.error.message, /user uses this browser/);
   assert.match(reply.error.message, /waited 30 s/);
   assert.match(reply.error.message, /do not debug/);
 });

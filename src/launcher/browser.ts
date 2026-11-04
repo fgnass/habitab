@@ -224,9 +224,8 @@ export function heldError(message: string, waitedMs: number): string | undefined
   let m: any;
   try { m = JSON.parse(message); } catch { return; }
   if (typeof m?.id !== 'number') return;
-  const text = `Habitab: the user has taken control of this browser to use the page. Your browser commands wait until the user gives control back; `
-    + `this one waited ${Math.round(waitedMs / 1000)} s and was cancelled. This is not a fault of the page, the browser or the tool: do not debug it. `
-    + `Wait a moment and try again, or continue with work that needs no browser.`;
+  const text = `The user uses this browser; this command waited ${Math.round(waitedMs / 1000)} s and was cancelled. `
+    + `Not a fault of the page or the tool: do not debug it. Try again, or continue with other work.`;
   return JSON.stringify({ id: m.id, ...(m.sessionId ? { sessionId: m.sessionId } : {}), error: { code: -32000, message: text } });
 }
 

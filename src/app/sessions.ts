@@ -334,11 +334,12 @@ interface SavedSession {
   cookies?: Electron.Cookie[];
 }
 
+/** The first line of every note to the agent: it knows its browser tool, not Habitab, and must not take the note for the user's words. */
+export const NOTE_HEAD = 'Automatic note about your chrome-devtools-mcp browser (not from the user, no answer needed):';
+
 /** To the agent when its browser commands begin to wait for the user. */
-export const HOLD_NOTE = 'Habitab: the user has taken control of your browser to use the page themselves. '
-  + 'Your browser commands wait until the user gives control back (Resume in Habitab, or by itself some seconds after the last input); '
-  + 'a command that waits too long gets an error that says so. A slow or failing browser tool call now has this cause, not a fault of the page, '
-  + 'the browser or the tool: do not debug it. Wait, or continue with work that needs no browser.';
+export const HOLD_NOTE = `${NOTE_HEAD} The user uses the browser for a moment. Your browser commands wait and then run by themselves. `
+  + 'A slow or failed browser call has this cause: do not debug it, and do not stop or ask the user. Continue your task.';
 
 /** User input takes control automatically; this long without input gives it back. */
 const AUTO_RESUME_MS = Number(process.env.HABITAB_AUTO_RESUME_MS) || 10_000;
@@ -1679,9 +1680,9 @@ export class SessionManager {
     log(`gpu: paused ${wc.getURL()} (${tab.gpuPaused} %)`);
     const title = wc.getTitle();
     this.pushToAgent(s, [
-      'Note from Habitab (not from the user):',
-      `Habitab paused the animation of the page ${wc.getURL()}${title ? ` ("${title}")` : ''}. Its drawing used about ${tab.gpuPaused} % of the GPU for more than ${Math.round(GPU_PAUSE_AFTER / 1000)} s, which slows down the user's whole computer.`,
-      "While paused, the page's requestAnimationFrame callbacks wait (and its timers too, if it keeps drawing): the page shows its last frame, also in screenshots. It runs again when the page loads anew (reload or navigation), or when the user resumes it. If it still keeps drawing, Habitab stops the page.",
+      NOTE_HEAD,
+      `The browser paused the animation of the page ${wc.getURL()}${title ? ` ("${title}")` : ''}. Its drawing used about ${tab.gpuPaused} % of the GPU for more than ${Math.round(GPU_PAUSE_AFTER / 1000)} s, which slows down the user's whole computer.`,
+      "While paused, the page's requestAnimationFrame callbacks wait (and its timers too, if it keeps drawing): the page shows its last frame, also in screenshots. It runs again when the page loads anew (reload or navigation), or when the user resumes it. If it still keeps drawing, the browser stops the page.",
       'Make the drawing cheaper before you go on: for example a lower resolution or pixel ratio, less work per pixel or vertex, fewer passes, or drawing only when something changes. Then reload the page and check that it runs without a high load.',
     ].join('\n'));
     this.onChange();
@@ -1714,8 +1715,8 @@ export class SessionManager {
     wc.forcefullyCrashRenderer();
     const page = this.pageOf(tab.id);
     if (page) this.pushToAgent(page.s, [
-      'Note from Habitab (not from the user):',
-      `Habitab stopped the page ${url}${title ? ` ("${title}")` : ''}: it kept drawing and loading the GPU although its animation frames and timers were paused. The tab is empty until it loads again (reload or navigation).`,
+      NOTE_HEAD,
+      `The browser stopped the page ${url}${title ? ` ("${title}")` : ''}: it kept drawing and loading the GPU although its animation frames and timers were paused. The tab is empty until it loads again (reload or navigation).`,
       'Find what keeps drawing (for example a loop driven by message events, a worker or a loop of its own) and make the drawing cheaper before you load the page again.',
     ].join('\n'));
     return true;
@@ -1786,8 +1787,8 @@ export class SessionManager {
     tab.gone = 'stopped';
     wc.forcefullyCrashRenderer();
     this.pushToAgent(s, [
-      'Note from Habitab (not from the user):',
-      `${byUser ? 'The user stopped' : 'Habitab stopped'} the page ${url}${title ? ` ("${title}")` : ''}: ${reason}. The tab is empty until it loads again (reload or navigation).`,
+      NOTE_HEAD,
+      `${byUser ? 'The user stopped' : 'The browser stopped'} the page ${url}${title ? ` ("${title}")` : ''}: ${reason}. The tab is empty until it loads again (reload or navigation).`,
       'Find and fix the cause before you load the page again, so that it does not get stuck again.',
     ].join('\n'));
     this.onChange();
