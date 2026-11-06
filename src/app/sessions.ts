@@ -296,6 +296,8 @@ export interface Session {
   /** The tab the agent used last (it gets the session's status in the sidebar). */
   agentTab?: Tab;
   held: boolean;
+  /** Automatic control of single tabs: the user works in them, the agent goes on in the others. Unset: all tabs. */
+  heldTabs?: Set<Tab>;
   /** The bridge holds commands of the agent: it waits for the user. */
   waiting?: boolean;
   /** The agent got the note that the user has control (once per hold). */
@@ -340,6 +342,32 @@ export const NOTE_HEAD = 'Automatic note about your chrome-devtools-mcp browser 
 /** To the agent when its browser commands begin to wait for the user. */
 export const HOLD_NOTE = `${NOTE_HEAD} The user uses the browser for a moment. Your browser commands wait and then run by themselves. `
   + 'A slow or failed browser call has this cause: do not debug it, and do not stop or ask the user. Continue your task.';
+
+/** HOLD_NOTE when the user has control of single tabs only: it names them, and the agent can go on in its other tabs. */
+export function holdNote(urls?: string[]): string {
+  if (!urls) return HOLD_NOTE;
+  const which = urls.length ? ` (${urls.join(', ')})` : '';
+  return `${NOTE_HEAD} The user uses ${urls.length > 1 ? 'some of your tabs' : 'one of your tabs'}${which} for a moment. `
+    + 'Your browser commands for it, and commands that open or select a tab, wait and then run by themselves. Commands in your other tabs run as usual. '
+    + 'A slow or failed browser call has this cause: do not debug it, and do not stop or ask the user. Continue your task.';
+}
+
+/** What the bridge holds: '' nothing, '*' all tabs, else the target ids of the held tabs. */
+function holdScope(s: Session): string {
+  return !s.held ? '' : s.heldTabs ? [...s.heldTabs].map(t => t.targetId).sort().join(',') : '*';
+}
+
+/** The page URL of a tab ('' for an empty or closed one). */
+function tabUrl(t: Tab): string {
+  const wc = t.view.webContents;
+  const url = wc.isDestroyed() ? '' : wc.getURL();
+  return url === 'about:blank' ? '' : url;
+}
+
+/** The hold message for the bridge. */
+function holdMessage(s: Session): Message {
+  return { type: 'hold', hold: s.held, ...(s.held && s.heldTabs ? { targets: [...s.heldTabs].map(t => t.targetId) } : {}) };
+}
 
 /** User input takes control automatically; this long without input gives it back. */
 const AUTO_RESUME_MS = Number(process.env.HABITAB_AUTO_RESUME_MS) || 10_000;
@@ -441,7 +469,7 @@ export class SessionManager {
     s.ended = false;
     if (s.meta.client === 'codex' && !s.codexThread) void this.attachCodex(s);
     // A reconnecting bridge keeps holding while the user has control.
-    if (s.held) line.send({ type: 'hold', hold: true });
+    if (s.held) line.send(holdMessage(s));
     this.onChange();
     return s;
   }
@@ -463,7 +491,7 @@ export class SessionManager {
       case 'waiting':
         s.waiting = !!m.waiting;
         // Without a reason, the agent takes the slow tool call for a hanging page and debugs it.
-        if (s.waiting && s.held && !s.holdNoted) s.holdNoted = this.pushToAgent(s, HOLD_NOTE);
+        if (s.waiting && s.held && !s.holdNoted) s.holdNoted = this.pushToAgent(s, holdNote(s.heldTabs && [...s.heldTabs].map(t => tabUrl(t)).filter(Boolean)));
         break;
       case 'bye':
         s.endReason = m.reason;
@@ -1475,18 +1503,23 @@ export class SessionManager {
     if (this.pausesDebugger(s)) void this.pauseDebugger(s, tab, true);
     if (pointer) this.pointerSinceFocus = true;
     if (tab.own) this.interaction(s);
-    else this.userInput(s, start);
+    else this.userInput(s, start, tab);
   }
 
-  /** The user acts in a session: control goes to the user until a pause. */
-  userInput(s: Session, start = true): void {
+  /**
+   * The user acts in a session: control goes to the user until a pause. With
+   * a tab, only of that tab: the agent goes on in its other tabs.
+   */
+  userInput(s: Session, start = true, tab?: Tab): void {
     this.interaction(s);
     if (s.ended || !s.line) return;
     if (s.held && !s.autoResumeAt) return; // Manual control: until Resume.
-    if (!s.held && !start) return;
+    // Only a click or key press takes control (of a tab that is not held yet); scrolling keeps it.
+    const added = !s.held || (!!tab && !!s.heldTabs && !s.heldTabs.has(tab));
+    if (added && !start) return;
     // Restart the countdown at most every half second.
-    if (s.autoResumeAt && s.autoResumeAt - Date.now() > AUTO_RESUME_MS - 500) return;
-    this.setHold(s, true, true);
+    if (!added && s.autoResumeAt && s.autoResumeAt - Date.now() > AUTO_RESUME_MS - 500) return;
+    this.setHold(s, true, true, tab && [tab]);
   }
 
   /** The user left Habitab: automatic control ends at once (manual control stays). */
@@ -1801,15 +1834,25 @@ export class SessionManager {
     wc.reload();
   }
 
-  setHold(s: Session, hold: boolean, auto = false): void {
+  /**
+   * Control for the user, or back to the agent. Automatic control with tabs
+   * holds only these tabs (added to the ones held automatically already);
+   * else all tabs.
+   */
+  setHold(s: Session, hold: boolean, auto = false, tabs?: Iterable<Tab>): void {
+    const wasAuto = !!s.autoResumeAt;
     clearTimeout(s.resumeTimer);
     s.resumeTimer = s.autoResumeAt = undefined;
     if (hold && auto) {
       s.autoResumeAt = Date.now() + AUTO_RESUME_MS;
       s.resumeTimer = setTimeout(() => this.setHold(s, false), AUTO_RESUME_MS);
     }
-    if (s.held !== hold) s.line?.send({ type: 'hold', hold });
+    const before = holdScope(s);
+    // Tabs held automatically so far: none, or all (undefined). Manual control does not count: it ends here.
+    const prev = s.held && wasAuto ? s.heldTabs : new Set<Tab>();
+    s.heldTabs = hold && auto && tabs && prev ? new Set([...prev, ...tabs]) : undefined;
     s.held = hold;
+    if (holdScope(s) !== before) s.line?.send(holdMessage(s));
     if (!hold) s.waiting = s.holdNoted = false;
     this.onChange();
   }

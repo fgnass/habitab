@@ -59,7 +59,10 @@ class BrowserBridge {
   /** When each of the agent's commands began to wait for the user. */
   private since = new Map<string, number>();
   private expireTimer?: NodeJS.Timeout;
-  private held = false;
+  /** The user has control: of all tabs (true), or only of these tabs (their target ids). */
+  private held: boolean | Set<string> = false;
+  /** The page (target id) of each CDP session; frames and workers belong to the page above them. */
+  private pageOf = new Map<string, string>();
   /** The app knows that the agent's commands wait for the user. */
   private waiting = false;
   private heldTimer?: NodeJS.Timeout;
@@ -73,7 +76,7 @@ class BrowserBridge {
     this.link = new ManagerLink(() => ({
       type: 'hello', sessionId: this.session, launcherPid: process.pid, serverPid: process.ppid, meta: this.meta, launch: { proxyServer },
     }));
-    this.link.onHold = hold => this.setHold(hold);
+    this.link.onHold = (hold, targets) => this.setHold(hold && (targets ? new Set(targets) : true));
     // Claude Code gives its MCP servers the inbox socket; Puppeteer passes the environment on.
     if (this.meta.client === 'claude' && process.env.CLAUDE_CODE_MESSAGING_SOCKET) this.meta.inbox = true;
     this.link.onFeedbackPush = content => void postToInbox(content);
@@ -92,7 +95,7 @@ class BrowserBridge {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/browser/${this.session}`, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
     this.ws = ws;
     ws.on('open', () => { log(`connected to the session browser (port ${port})`); this.flush(); });
-    ws.on('message', data => this.toPipe(String(data)));
+    ws.on('message', data => { const m = String(data); this.track(m); this.toPipe(m); });
     // The app closed the browser (profile switch, app quit): the server lives on and starts a new bridge with its next call.
     ws.on('close', () => this.end('session browser closed', 1, false));
     ws.on('error', e => log(`browser connection error: ${e.message}`));
@@ -130,10 +133,11 @@ class BrowserBridge {
     const open = this.ws?.readyState === WebSocket.OPEN;
     const later: string[] = [];
     for (const m of this.queue) {
-      if (open && !(this.held && isAgentWork(m))) { this.ws!.send(m); this.since.delete(m); }
+      const waits = this.waits(m);
+      if (open && !waits) { this.ws!.send(m); this.since.delete(m); }
       else {
         later.push(m);
-        if (this.held && isAgentWork(m) && !this.since.has(m)) {
+        if (waits && !this.since.has(m)) {
           if (!this.since.size) log(`waits for the user: ${/"method":"([^"]+)"/.exec(m)?.[1]}`);
           this.since.set(m, Date.now());
         }
@@ -162,7 +166,7 @@ class BrowserBridge {
       const at = this.since.get(m);
       if (at === undefined || now - at < HELD_LIMIT_MS) return true;
       this.since.delete(m);
-      const reply = heldError(m, now - at);
+      const reply = heldError(m, now - at, this.held !== true);
       log(`cancelled after ${Math.round((now - at) / 1000)} s (user has control): ${/"method":"([^"]+)"/.exec(m)?.[1]}`);
       if (reply) this.toPipe(reply);
       return false;
@@ -172,7 +176,7 @@ class BrowserBridge {
   }
 
   private setWaiting(): void {
-    const waiting = this.held && this.queue.some(isAgentWork);
+    const waiting = this.queue.some(m => this.waits(m));
     if (this.waiting === waiting) return;
     this.waiting = waiting;
     this.link.send({ type: 'waiting', waiting });
@@ -187,13 +191,26 @@ class BrowserBridge {
     }
   }
 
-  /** The user has control: the agent's commands wait (at most ten minutes). */
-  private setHold(hold: boolean): void {
+  /** The agent's command waits for the user: the user has control of all tabs, or of the tab the command is for. */
+  private waits(message: string): boolean {
+    if (!this.held || !isAgentWork(message)) return false;
+    return this.held === true || waitsForTabs(message, this.held, this.pageOf);
+  }
+
+  /** Follows which page each CDP session belongs to (for control of single tabs). */
+  private track(message: string): void {
+    if (!message.includes('"Target.attachedToTarget"') && !message.includes('"Target.detachedFromTarget"')) return;
+    try { trackSession(JSON.parse(message), this.pageOf); } catch {}
+  }
+
+  /** The user has control (of all tabs, or of some): the agent's commands for them wait (at most ten minutes). */
+  private setHold(hold: boolean | Set<string>): void {
+    if (hold instanceof Set && !hold.size) hold = false;
     this.held = hold;
     clearTimeout(this.heldTimer);
+    this.flush();
     if (hold) this.heldTimer = setTimeout(() => { this.setHold(false); this.link.send({ type: 'hold', hold: false }); }, 10 * 60_000).unref();
-    else this.flush();
-    log(`hold=${hold}`);
+    log(`hold=${hold instanceof Set ? [...hold].join(',') : hold}`);
   }
 
   private end(reason: string, code: number, signOff = true): void {
@@ -212,6 +229,33 @@ function isAgentWork(message: string): boolean {
   return isAgentAction(/"method":"([^"]+)"/.exec(message)?.[1]);
 }
 
+/** The agent's actions that change the tab the user sees: they wait while the user has control of any tab. */
+const SWITCHES_TAB = new Set(['Target.createTarget', 'Target.activateTarget', 'Page.bringToFront']);
+
+/**
+ * While the user has control of some tabs only: does the agent's action wait?
+ * Yes, if it is for one of these tabs, or if it would show another tab in
+ * place of the user's. Its tab is the page of its CDP session, or for a
+ * browser-level command its targetId.
+ */
+export function waitsForTabs(message: string, tabs: Set<string>, pageOf: Map<string, string>): boolean {
+  let m: any;
+  try { m = JSON.parse(message); } catch { return false; }
+  if (SWITCHES_TAB.has(m?.method)) return true;
+  const target = m?.sessionId ? pageOf.get(m.sessionId) : m?.params?.targetId;
+  return typeof target === 'string' && tabs.has(target);
+}
+
+/** Notes the page of a new CDP session (Target.attachedToTarget), or forgets a gone one. */
+export function trackSession(m: any, pageOf: Map<string, string>): void {
+  const p = m?.params ?? {};
+  if (m?.method === 'Target.attachedToTarget' && p.sessionId && p.targetInfo?.targetId) {
+    // Workers, worklets and frames belong to the page above them (not to its "tab" target).
+    const parent = p.targetInfo.type !== 'page' && m.sessionId ? pageOf.get(m.sessionId) : undefined;
+    pageOf.set(p.sessionId, parent ?? p.targetInfo.targetId);
+  } else if (m?.method === 'Target.detachedFromTarget' && p.sessionId) pageOf.delete(p.sessionId);
+}
+
 /** The agent's command waits this long for the user, then it gets an error (heldError). */
 export const HELD_LIMIT_MS = Number(process.env.HABITAB_HELD_LIMIT_MS) || 30_000;
 
@@ -220,11 +264,11 @@ export const HELD_LIMIT_MS = Number(process.env.HABITAB_HELD_LIMIT_MS) || 30_000
  * control. Puppeteer puts the message into its error, and
  * chrome-devtools-mcp into the tool's result.
  */
-export function heldError(message: string, waitedMs: number): string | undefined {
+export function heldError(message: string, waitedMs: number, oneTab = false): string | undefined {
   let m: any;
   try { m = JSON.parse(message); } catch { return; }
   if (typeof m?.id !== 'number') return;
-  const text = `The user uses this browser; this command waited ${Math.round(waitedMs / 1000)} s and was cancelled. `
+  const text = `The user uses ${oneTab ? 'a tab of ' : ''}this browser; this command waited ${Math.round(waitedMs / 1000)} s and was cancelled. `
     + `Not a fault of the page or the tool: do not debug it. Try again, or continue with other work.`;
   return JSON.stringify({ id: m.id, ...(m.sessionId ? { sessionId: m.sessionId } : {}), error: { code: -32000, message: text } });
 }

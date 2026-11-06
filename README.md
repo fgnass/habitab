@@ -88,10 +88,12 @@ Habitab.app (Electron)
    • responsive mode (⇧⌘M): fills the free space by default (zoom: fit); drag
      handles like Chrome's, width presets from phone to 2xl and one that fills
      the space again, width × height. The agent's size lights no preset
-   • take control: a click in a page holds the agent's next commands (key
-     presses only after a click since you came back to Habitab, so Cmd+Tab
-     does not count); it goes on after 10 s without input, when you switch
-     to another app, or on Resume. Only the agent's actions wait (click,
+   • take control: a click in a page holds the agent's next commands in that
+     tab (key presses only after a click since you came back to Habitab, so
+     Cmd+Tab does not count); it goes on after 10 s without input, when you
+     switch to another app, or on Resume. In its other tabs the agent goes
+     on; only commands that open or select a tab wait too. Take Control
+     (⇧⌘P) and marking hold all tabs. Only the agent's actions wait (click,
      type, navigate, script, screenshot, snapshot, emulation;
      shared/agent-actions.ts), the server's own bookkeeping goes on. When an
      action begins to wait, the agent gets a note (Claude Code inbox, Codex) that the user has

@@ -361,6 +361,31 @@ check(ownDone && (await ownCall).text.includes('44') && await pageId(b) === agen
 await control(`closetab ${sb.id}`);
 await sleep(500);
 
+// Control of one tab: the user clicks in one of the agent's tabs, the agent goes on in its other tab
+await b.tool('new_page', { url: `${base}/beta` });
+const otherPage = await pageId(b);
+const userTab = (await state()).sessions.find(s => s.id === sb.id).tabs.find(t => !t.active);
+await control(`select ${sb.id} ${userTab.id}`);
+await control(`userclick ${sb.id}`);
+await sleep(300);
+const notesAtTabHold = inboxLines.filter(l => l.type === 'user').length;
+let otherDone = false;
+const otherCall = b.tool('evaluate_script', { pageId: otherPage, function: '() => 45' }).then(r => { otherDone = true; return r; });
+await sleep(1000);
+const tabHeld = (await state()).sessions.find(s => s.id === sb.id);
+check(tabHeld.held && otherDone && (await otherCall).text.includes('45'), 'control of one tab: the agent goes on in its other tab', JSON.stringify({ held: tabHeld.held, otherDone }));
+check(!tabHeld.waiting && inboxLines.filter(l => l.type === 'user').length === notesAtTabHold, 'control of one tab: no note while the agent works in its other tab');
+const tabNote = nextNote();
+let userTabDone = false;
+const userTabCall = b.tool('evaluate_script', { pageId: agentPage, function: '() => 46' }).then(r => { userTabDone = true; return r; });
+await sleep(1000);
+check(!userTabDone && (await state()).sessions.find(s => s.id === sb.id).waiting, "control of one tab: the agent's call in the user's tab waits");
+check(/not from the user.*one of your tabs/.test((await tabNote).text), 'control of one tab: the note names the tab', (await tabNote).text.slice(0, 160));
+await control(`hold ${sb.id} off`);
+check((await userTabCall).text.includes('46'), "control of one tab: the call in the user's tab runs after release");
+await b.tool('close_page', { pageId: otherPage });
+await sleep(500);
+
 // Feedback: the agent gets a note with the details and the image file (Claude Code inbox); also while held
 check((await state()).sessions.find(s => s.id === sb.id).push === true, 'feedback can be pushed to the session (inbox socket from the environment)');
 await control(`hold ${sb.id} on`);

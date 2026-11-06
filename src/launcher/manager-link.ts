@@ -14,7 +14,7 @@ export class ManagerLink {
   private pending = new Map<number, (port?: number, error?: string) => void>();
   private lastWake = 0;
   private connecting?: Promise<boolean>;
-  onHold?: (hold: boolean) => void;
+  onHold?: (hold: boolean, targets?: string[]) => void;
   onFeedbackPush?: (content: string) => void;
 
   constructor(private hello: () => Message) {}
@@ -56,7 +56,7 @@ export class ManagerLink {
       this.pending.delete(m.requestId);
       cb?.(m.port, m.error);
     } else if (m.type === 'hold') {
-      this.onHold?.(m.hold);
+      this.onHold?.(m.hold, m.targets);
     } else if (m.type === 'feedbackPush') {
       this.onFeedbackPush?.(m.content);
     }

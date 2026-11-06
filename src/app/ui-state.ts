@@ -45,8 +45,8 @@ export function uiState(m: SessionManager) {
       timeline: s.id === m.selected ? s.timeline.filter(x => x.tab === s.active?.id) : null,
       timelineCount: s.timeline.length,
       held: s.held,
-      /** The user has control and the agent wants to go on (a held command, or Codex reports a call). */
-      waiting: s.held && (!!s.waiting || !!s.currentTool),
+      /** The user has control and the agent wants to go on (a held command, or Codex reports a call while all tabs are held). */
+      waiting: s.held && (!!s.waiting || (!s.heldTabs && !!s.currentTool)),
       /** Feedback reaches the agent as a note (Claude Code inbox, Codex app-server). */
       push: canPush(s.meta),
       autoResumeIn: s.autoResumeAt ? Math.max(0, s.autoResumeAt - Date.now()) : null,

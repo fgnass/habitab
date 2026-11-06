@@ -33,8 +33,11 @@ export type Message =
   /** The bridge needs the browser: the app creates the session browser if needed. */
   | { type: 'attach'; requestId: number }
   | { type: 'endpoint'; requestId: number; port?: number; error?: string }
-  /** The user has control: the bridge holds the agent's commands (and releases them by itself after a limit). */
-  | { type: 'hold'; hold: boolean }
+  /**
+   * The user has control: the bridge holds the agent's commands (and releases them by itself after a limit).
+   * With `targets`, only the commands for these tabs (the user works in them; the agent goes on in the others).
+   */
+  | { type: 'hold'; hold: boolean; targets?: string[] }
   /** Bridge to app: while the user has control, the agent's commands wait (true), or they went on (false). */
   | { type: 'waiting'; waiting: boolean }
   /** Feedback for the agent: pushed into the Claude Code session through its inbox socket. */

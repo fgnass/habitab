@@ -75,7 +75,7 @@ let statusHeight = STATUSBAR;
 /** Marking mode: the annotator overlay lies over the selected page. */
 let annotating = false;
 /** While the user marks, the agent's commands wait: the session held for it, and the control it had before (put back after). */
-let annotateHold: { s: Session; before: 'none' | 'auto' | 'manual' } | null = null;
+let annotateHold: { s: Session; before: 'none' | 'auto' | 'manual'; tabs?: Set<Tab> } | null = null;
 /** What the user marked, taken at once (by the overlay's id of the mark): the page may change before the comments are written. */
 const marks = new Map<number, { tab: Tab; rect: Electron.Rectangle; done: Promise<Mark> }>();
 /** Marks the user kept to send together with the next one (the overlay reports how many). */
@@ -324,7 +324,7 @@ const USER_ACTIONS = new Set(['navigate', 'back', 'forward', 'reload', 'stop', '
 async function action(name: string, ...args: any[]): Promise<unknown> {
   const s = selected();
   // In the user's own tab the agent goes on.
-  if (s && USER_ACTIONS.has(name) && !s.active?.own) manager.userInput(s);
+  if (s && USER_ACTIONS.has(name) && !s.active?.own) manager.userInput(s, true, s.active);
   switch (name) {
     case 'select': return select(args[0], args[1]);
     case 'navigate': {
@@ -392,7 +392,7 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     }
     case 'timelineOpenUrl': {
       if (!s?.active || typeof args[0] !== 'string' || !/^https?:|^file:/.test(args[0])) return;
-      manager.userInput(s);
+      manager.userInput(s, true, s.active);
       setTimelineOpen(false);
       return s.active.view.webContents.loadURL(args[0]).catch(() => {});
     }
@@ -461,18 +461,18 @@ function holdForMark(s: Session): void {
   if (annotateHold?.s === s) return;
   releaseMarkHold();
   if (s.ended || !s.line) return;
-  annotateHold = { s, before: !s.held ? 'none' : s.autoResumeAt ? 'auto' : 'manual' };
+  annotateHold = { s, before: !s.held ? 'none' : s.autoResumeAt ? 'auto' : 'manual', tabs: s.heldTabs };
   if (annotateHold.before !== 'manual') manager.setHold(s, true);
 }
 
 function releaseMarkHold(): void {
   if (!annotateHold) return;
-  const { s, before } = annotateHold;
+  const { s, before, tabs } = annotateHold;
   annotateHold = null;
   if (before === 'manual' || s.ended) return;
   // Meanwhile the user resumed the agent or took control: that stays.
   if (!s.held || s.autoResumeAt) return;
-  if (before === 'auto') manager.setHold(s, true, true);
+  if (before === 'auto') manager.setHold(s, true, true, tabs);
   else manager.setHold(s, false);
 }
 

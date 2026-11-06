@@ -160,7 +160,7 @@ function render() {
   // The user's own tab (Own Tab): say so, the agent's calls are in its tab.
   else if (s?.nav?.own) cells = [wide('Your own tab: the agent does not use it and goes on in its tab', 'own'), button('act own', 'x', 'Close Tab', 'Close your own tab (⌘W)', closeFrontTab)];
   else if (waiting) cells = waitingCells(current);
-  else if (current) cells = lineCells(current, s.held ? 'held' : 'running');
+  else if (current) cells = lineCells(current, s.waiting ? 'held' : 'running');
   else if (stateText(s)) cells = [wide(stateText(s))];
   else if (latest) cells = lineCells(latest);
   else cells = [wide(s ? 'No tool calls yet' : '', 'quiet')];
