@@ -747,6 +747,20 @@ await sleep(500);
 let vpa = await viewport();
 let emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
 check(vpa?.[0] === 375 && vpa?.[1] === 667 && vpa?.[2] === 2 && emu?.by === 'user', 'responsive mode emulates the device for the agent too', JSON.stringify({ vpa, emu }));
+// Touch emulation: a long press belongs to the page (its contextmenu event), Habitab opens no menu of its own.
+{
+  await uiEval('page', `(() => { window.__menus = 0; addEventListener('contextmenu', () => window.__menus++); return 1; })()`);
+  const menusOf = async () => { const n = events.length; app.stdin.write('menus\n'); for (let i = 0; i < 50; i++) { await sleep(100); const e = events.slice(n).find(x => 'menus' in x); if (e) return e.menus; } };
+  const before = await menusOf();
+  await control('usermouse page down 60 60');
+  await sleep(1200);
+  await control('usermouse page up 60 60');
+  await sleep(300);
+  const pageMenus = (await uiEval('page', 'window.__menus'))?.result;
+  const after = await menusOf();
+  check(pageMenus >= 1 && after === before, 'touch emulation: a long press reaches the page, Habitab opens no context menu', JSON.stringify({ pageMenus, before, after }));
+  await control(`hold ${sb.id} off`);
+}
 await control(`action ${sb.id} emulate {"rotate":true}`);
 await sleep(400);
 vpa = await viewport();

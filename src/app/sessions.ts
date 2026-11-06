@@ -18,6 +18,7 @@ import { prefs, setPrefs } from './prefs';
 import { SessionProxy } from './proxy';
 import { StepDetector } from './cdp-steps';
 import { codexThreadName } from '../shared/session-info';
+import { showsContextMenu } from '../shared/touch';
 import { CodexAppServer, isBrowserTool, itemError, summarizeArgs } from './codex';
 
 /**
@@ -1862,7 +1863,13 @@ export class SessionManager {
 
   // MARK: Context menu
 
+  /** Context menus opened in pages (for the tests). */
+  contextMenus = 0;
+
   private contextMenu(s: Session, tab: Tab, p: Electron.ContextMenuParams): void {
+    // A long press in touch emulation belongs to the page (as on a phone).
+    if (!showsContextMenu(p.menuSourceType)) return;
+    this.contextMenus++;
     const wc = tab.view.webContents;
     const items: MenuItemConstructorOptions[] = [];
     if (p.linkURL) {

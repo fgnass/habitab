@@ -29,6 +29,8 @@ export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: st
       else if (cmd === 'deselect') { m.selected = undefined; ui.layout(); ui.publish(); }
       else if (cmd === 'devtools' && s) m.toggleDevtools(s);
       else if (cmd === 'hold' && s) m.setHold(s, arg === 'on');
+      // How many context menus the pages opened (Habitab's own menu, not the page's).
+      else if (cmd === 'menus') out({ menus: m.contextMenus });
       else if (cmd === 'pin' && s) s.pinned = arg !== 'off';
       else if (cmd === 'interact' && s) m.interaction(s);
       else if (cmd === 'debugger' && s?.active) void m.pauseDebugger(s, s.active, arg === 'off');

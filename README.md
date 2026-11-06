@@ -87,7 +87,9 @@ Habitab.app (Electron)
      bottom of the page
    • responsive mode (⇧⌘M): fills the free space by default (zoom: fit); drag
      handles like Chrome's, width presets from phone to 2xl and one that fills
-     the space again, width × height. The agent's size lights no preset
+     the space again, width × height. The agent's size lights no preset.
+     With touch, a long press goes to the page (as on a phone): no context
+     menu of Habitab; a right click still opens it
    • take control: a click in a page holds the agent's next commands in that
      tab (key presses only after a click since you came back to Habitab, so
      Cmd+Tab does not count); it goes on after 10 s without input, when you
