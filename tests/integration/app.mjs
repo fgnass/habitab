@@ -765,6 +765,9 @@ await control(`action ${sb.id} emulate {"preset": "responsive", "width": 390}`);
 await sleep(400);
 emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
 check(emu?.by === 'user' && emu.zoom === 'fit' && emu.scale < 1 && !emu.cut, "the user's change of the agent's size scales it to fit", JSON.stringify(emu));
+// The page lays out for the user's size, not for the agent's earlier one (one override, not two).
+vpa = (await b.tool('evaluate_script', { pageId: pb, function: '() => `${innerWidth}x${innerHeight}x${screen.height}`' })).text.match(/\d+x\d+x\d+/)?.[0];
+check(vpa === `${emu.width}x${emu.height}x${emu.height}`, "after the user's change the page lays out for the user's size", JSON.stringify({ page: vpa, user: [emu.width, emu.height] }));
 await b.tool('emulate', { pageId: pb, viewport: '500x400x1' });
 await sleep(400);
 // Marking in responsive mode: the overlay also covers the room beside the

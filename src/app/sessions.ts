@@ -655,14 +655,17 @@ export class SessionManager {
           this.thumbSoon(s);
           this.onLayout(); this.onChange();
         },
-        agentEmulation: (targetId, p) => {
+        agentEmulation: async (targetId, p) => {
           const t = s.tabs.find(x => x.targetId === targetId);
-          if (!t) return;
+          if (!t) return false;
           // Width and height 0 keep the view size: nothing to frame.
           t.emulation = p && p.width > 0 && p.height > 0
             ? { width: p.width, height: p.height, dpr: p.deviceScaleFactor ?? 0, mobile: !!p.mobile, zoom: p.scale ?? 1, scale: p.scale ?? 1, by: 'agent' }
             : undefined;
+          // In the app's session, like the user's responsive mode: the user's next size replaces it.
+          await this.cdp(t, p ? 'Emulation.setDeviceMetricsOverride' : 'Emulation.clearDeviceMetricsOverride', p ?? undefined);
           this.onLayout(); this.onChange();
+          return true;
         },
       });
       await s.proxy.listen();

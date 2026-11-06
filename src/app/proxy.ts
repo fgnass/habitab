@@ -31,8 +31,8 @@ export interface ProxyHooks {
   resizeTab: (targetId: string, width: number, height: number) => Promise<void>;
   /** Agent input (Input.*) to a tab starts (+1) or got its answer (-1). */
   agentInput: (targetId: string, delta: 1 | -1) => void;
-  /** The agent set (params) or cleared (null) device emulation of a tab. */
-  agentEmulation: (targetId: string, params: any) => void;
+  /** The agent sets (params) or clears (null) device emulation of a tab: the app applies it; false if the tab is unknown. */
+  agentEmulation: (targetId: string, params: any) => Promise<boolean>;
   /** The agent works with a tab (see USE). */
   agentUse: (targetId: string) => void;
   /** The agent's work turned the paused debugger of a tab on again. */
@@ -262,10 +262,12 @@ export class SessionProxy {
         h.activateTab(ownSessions.get(sessionId)!);
         return reply(id, {}, sessionId);
       }
-      // Device emulation is shared with the user's responsive mode.
-      if ((method === 'Emulation.setDeviceMetricsOverride' || method === 'Emulation.clearDeviceMetricsOverride') && sessionId && ownSessions.has(sessionId)) {
-        const t = ownSessions.get(sessionId)!;
-        filters.set(id, m => { if (!m.error) h.agentEmulation(t, method === 'Emulation.clearDeviceMetricsOverride' ? null : params); return m; });
+      // Device emulation is shared with the user's responsive mode, and the
+      // app sets it in its own session: an override of the agent's session
+      // would stay next to the user's, and the page would lay out for one size
+      // and show another.
+      if ((method === 'Emulation.setDeviceMetricsOverride' || method === 'Emulation.clearDeviceMetricsOverride') && page && ownSessions.get(sessionId) === page) {
+        if (await h.agentEmulation(page, method === 'Emulation.clearDeviceMetricsOverride' ? null : params)) return reply(id, {}, sessionId);
       }
 
       // Electron has no browser window per tab. Window calls map to the
