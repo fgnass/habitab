@@ -31,6 +31,10 @@ export interface ProxyHooks {
   resizeTab: (targetId: string, width: number, height: number) => Promise<void>;
   /** Agent input (Input.*) to a tab starts (+1) or got its answer (-1). */
   agentInput: (targetId: string, delta: 1 | -1) => void;
+  /** The scale of a tab's emulated viewport (responsive mode shows it smaller); 1 without emulation. */
+  inputScale: (targetId: string) => number;
+  /** A screenshot of a scaled tab, taken by the app (undefined: the agent's own session takes it). */
+  screenshot: (targetId: string, params: any) => Promise<{ data: string } | undefined>;
   /** The agent sets (params) or clears (null) device emulation of a tab: the app applies it; false if the tab is unknown. */
   agentEmulation: (targetId: string, params: any) => Promise<boolean>;
   /** The agent works with a tab (see USE). */
@@ -256,6 +260,10 @@ export class SessionProxy {
       if (inputTarget) {
         h.agentInput(inputTarget, 1);
         filters.set(id, m => { h.agentInput(inputTarget, -1); return m; });
+        // A page shown smaller than its viewport (emulation scale): Chromium takes the
+        // mouse's position in the scaled view, the agent gives it in CSS pixels of the page.
+        const k = method === 'Input.dispatchMouseEvent' ? h.inputScale(inputTarget) : 1;
+        if (k !== 1 && typeof params.x === 'number' && typeof params.y === 'number') msg.params = { ...params, x: params.x * k, y: params.y * k };
       }
       // Electron would activate the app window for these; the user may work elsewhere.
       if (method === 'Page.bringToFront' && sessionId && ownSessions.has(sessionId)) {
@@ -268,6 +276,16 @@ export class SessionProxy {
       // and show another.
       if ((method === 'Emulation.setDeviceMetricsOverride' || method === 'Emulation.clearDeviceMetricsOverride') && page && ownSessions.get(sessionId) === page) {
         if (await h.agentEmulation(page, method === 'Emulation.clearDeviceMetricsOverride' ? null : params)) return reply(id, {}, sessionId);
+      }
+
+      // A page shown smaller (emulation scale): the agent's session knows
+      // nothing of the scale and would capture the smaller view. The app's
+      // session set it, so it takes the screenshot in the viewport's own size.
+      if (method === 'Page.captureScreenshot' && page && ownSessions.get(sessionId) === page && h.inputScale(page) !== 1) {
+        try {
+          const r = await h.screenshot(page, params);
+          if (r) return reply(id, r, sessionId);
+        } catch (e: any) { return fail(id, String(e?.message ?? e), sessionId); }
       }
 
       // Electron has no browser window per tab. Window calls map to the

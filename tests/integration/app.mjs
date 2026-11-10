@@ -787,16 +787,31 @@ await b.tool('emulate', { pageId: pb, viewport: '500x400x1' });
 await sleep(400);
 emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
 check(emu?.by === 'agent' && emu.width === 500 && emu.height === 400, "the agent's emulation replaces the user's and shows in the bar", JSON.stringify(emu));
-// The agent's size is not scaled (its screenshots would shrink): too tall, the bar says it is cut off.
+// The agent's size that does not fit is shown scaled down; for the agent nothing
+// changes: the page's layout, its screenshot and where its clicks land.
 await b.tool('emulate', { pageId: pb, viewport: '500x3000x1' });
 await sleep(400);
 emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
-check(emu?.by === 'agent' && emu.cut && emu.scale === 1, "an agent's size that does not fit is marked as cut off", JSON.stringify(emu));
+{
+  const pg = (await (async () => { const n = events.length; await control('bounds page'); return events.slice(n).find(e => e.bounds)?.bounds; })());
+  check(emu?.by === 'agent' && emu.scale < 1 && pg && Math.abs(pg.height - 3000 * emu.scale) <= 1, "an agent's size that does not fit is scaled down to fit", JSON.stringify({ emu, pg }));
+  const shot = (await b.tool('take_screenshot', { pageId: pb })).raw?.result?.content?.find(c => c.type === 'image');
+  const png = shot && Buffer.from(shot.data, 'base64');
+  const size = png && shot.mimeType === 'image/png' ? [png.readUInt32BE(16), png.readUInt32BE(20)] : null;
+  check(size?.[0] === 500 && size?.[1] === 3000, "the scaled agent's size: the screenshot has the viewport's full size", JSON.stringify({ size, mime: shot?.mimeType }));
+  await b.tool('evaluate_script', { pageId: pb, function: `() => { document.body.insertAdjacentHTML('beforeend', '<button id="far" style="position:fixed;left:400px;top:2900px;width:80px;height:40px">Far away</button>'); window.__far = []; document.getElementById('far').onclick = e => __far.push([e.clientX, e.clientY]); return [innerWidth, innerHeight].join('x'); }` });
+  const layout = (await b.tool('evaluate_script', { pageId: pb, function: '() => [innerWidth, innerHeight, devicePixelRatio, visualViewport.scale].join("x")' })).text.match(/\d+x\d+x[\d.]+x[\d.]+/)?.[0];
+  check(layout === '500x3000x1x1', "the scaled agent's size: the page lays out as before", JSON.stringify(layout));
+  await b.tool('click', { pageId: pb, uid: (await b.tool('take_snapshot', { pageId: pb })).text.match(/uid=(\S+) button "Far away"/)?.[1] });
+  const far = (await b.tool('evaluate_script', { pageId: pb, function: '() => JSON.stringify(__far)' })).text.match(/\[\[.*?\]\]/)?.[0];
+  const [fx, fy] = far ? JSON.parse(far)[0] : [];
+  check(fx >= 400 && fx <= 480 && fy >= 2900 && fy <= 2940, "the scaled agent's size: the agent's click lands on the element", JSON.stringify(far));
+}
 // The user changes it: from now on it is scaled to fit
 await control(`action ${sb.id} emulate {"preset": "responsive", "width": 390}`);
 await sleep(400);
 emu = (await state()).sessions.find(s => s.id === sb.id).nav.emulation;
-check(emu?.by === 'user' && emu.zoom === 'fit' && emu.scale < 1 && !emu.cut, "the user's change of the agent's size scales it to fit", JSON.stringify(emu));
+check(emu?.by === 'user' && emu.zoom === 'fit' && emu.scale < 1, "the user's change of the agent's size scales it to fit", JSON.stringify(emu));
 // The page lays out for the user's size, not for the agent's earlier one (one override, not two).
 vpa = (await b.tool('evaluate_script', { pageId: pb, function: '() => `${innerWidth}x${innerHeight}x${screen.height}`' })).text.match(/\d+x\d+x\d+/)?.[0];
 check(vpa === `${emu.width}x${emu.height}x${emu.height}`, "after the user's change the page lays out for the user's size", JSON.stringify({ page: vpa, user: [emu.width, emu.height] }));

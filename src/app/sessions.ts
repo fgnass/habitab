@@ -60,8 +60,8 @@ export interface Emulation {
   fillHeight?: boolean;
   by: 'user' | 'agent';
   scale?: number;
-  /** The agent's size does not fit the free space: the view cuts it off. */
-  cut?: boolean;
+  /** The agent's own override (Emulation.setDeviceMetricsOverride), sent again with the scale that fits. */
+  params?: Record<string, unknown>;
   /** The override last sent (width, height, scale), to send again only on change. */
   applied?: string;
 }
@@ -83,6 +83,8 @@ export interface Tab {
   view: WebContentsView;
   targetId: string;
   emulation?: Emulation;
+  /** The override last sent to the page (the agent gets its answer when it is in effect). */
+  emulationSent?: Promise<void>;
   /** Where the emulated page sits inside the content area (for the resize handles). */
   frame?: { x: number; y: number; width: number; height: number; scale: number };
   /** Agent input in flight through the CDP proxy, and when it last changed. */
@@ -332,7 +334,7 @@ interface SavedSession {
   /** Steps with `tab` as the index into `tabs` (tab ids change with an app restart). */
   timeline?: Step[];
   uses?: number;
-  tabs: { url: string; active: boolean; usedAt?: number; emulation?: Omit<Emulation, 'scale' | 'applied' | 'cut'>; own?: boolean }[];
+  tabs: { url: string; active: boolean; usedAt?: number; emulation?: Omit<Emulation, 'scale' | 'applied' | 'params'>; own?: boolean }[];
   /** Only for in-memory partitions; a persistent profile has its cookies on disk. */
   cookies?: Electron.Cookie[];
 }
@@ -628,6 +630,20 @@ export class SessionManager {
           const b = t?.emulation?.by === 'agent' ? t.emulation : t?.view.getBounds();
           return { width: b?.width ?? 0, height: b?.height ?? 0 };
         },
+        inputScale: targetId => s.tabs.find(x => x.targetId === targetId)?.emulation?.scale ?? 1,
+        screenshot: async (targetId, params) => {
+          const t = s.tabs.find(x => x.targetId === targetId);
+          if (!t || (t.emulation?.scale ?? 1) === 1) return undefined;
+          const d = t.view.webContents.debugger;
+          if (!d.isAttached()) d.attach('1.3');
+          let clip = params.clip;
+          // Without a clip: the visible viewport, as the agent's own session would give it.
+          if (!clip) {
+            const { cssVisualViewport: v } = await d.sendCommand('Page.getLayoutMetrics');
+            clip = { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale: 1 };
+          }
+          return await d.sendCommand('Page.captureScreenshot', { ...params, clip });
+        },
         agentInput: (targetId, delta) => {
           const t = s.tabs.find(x => x.targetId === targetId);
           if (t) { t.agentInputs = Math.max(0, t.agentInputs + delta); t.agentInputAt = Date.now(); }
@@ -660,12 +676,17 @@ export class SessionManager {
           const t = s.tabs.find(x => x.targetId === targetId);
           if (!t) return false;
           // Width and height 0 keep the view size: nothing to frame.
-          t.emulation = p && p.width > 0 && p.height > 0
-            ? { width: p.width, height: p.height, dpr: p.deviceScaleFactor ?? 0, mobile: !!p.mobile, zoom: p.scale ?? 1, scale: p.scale ?? 1, by: 'agent' }
-            : undefined;
           // In the app's session, like the user's responsive mode: the user's next size replaces it.
-          await this.cdp(t, p ? 'Emulation.setDeviceMetricsOverride' : 'Emulation.clearDeviceMetricsOverride', p ?? undefined);
-          this.onLayout(); this.onChange();
+          if (p && p.width > 0 && p.height > 0) {
+            // The layout sends the override, with a scale that shows all of the viewport.
+            t.emulation = { width: p.width, height: p.height, dpr: p.deviceScaleFactor ?? 0, mobile: !!p.mobile, zoom: p.scale ?? 1, by: 'agent', params: p };
+            this.onLayout(); this.onChange();
+            await t.emulationSent;
+          } else {
+            t.emulation = undefined;
+            await this.cdp(t, p ? 'Emulation.setDeviceMetricsOverride' : 'Emulation.clearDeviceMetricsOverride', p ?? undefined);
+            this.onLayout(); this.onChange();
+          }
           return true;
         },
       });
@@ -1444,31 +1465,37 @@ export class SessionManager {
    * with this exact viewport, as with the agent's own emulation.
    */
   async agentSize(tab: Tab, width: number, height: number, dpr = 0, mobile = false, scale = 1): Promise<void> {
-    tab.emulation = { width, height, dpr, mobile, zoom: scale, scale, by: 'agent' };
+    // The layout sends the override, with a scale that shows all of the viewport.
+    tab.emulation = { width, height, dpr, mobile, zoom: scale, by: 'agent' };
     this.onLayout();
     this.onChange();
     await Promise.all([
       this.cdp(tab, 'Emulation.setTouchEmulationEnabled', { enabled: false }),
       this.cdp(tab, 'Emulation.setEmitTouchEventsForMouse', { enabled: false }),
-      this.cdp(tab, 'Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dpr, mobile, scale }),
+      tab.emulationSent,
     ]);
   }
 
   /**
    * Called by the layout with the size (for filled dimensions) and the scale
-   * that fit; sends the override only when something changed.
+   * that fit; sends the override only when something changed. The scale only
+   * shows the page smaller: its layout, its screenshots and the agent's input
+   * stay in the viewport's CSS pixels (the proxy converts the mouse's position).
    */
   applyEmulation(tab: Tab, width: number, height: number, scale: number): void {
     const e = tab.emulation;
-    if (!e || e.by !== 'user') return;
+    if (!e) return;
     e.width = width;
     e.height = height;
     e.scale = scale;
     const key = `${width}x${height}@${scale}/${e.dpr}/${e.mobile}`;
     if (e.applied === key) return;
     e.applied = key;
-    // The screen has the size of the viewport, as in Chrome's responsive mode.
-    void this.cdp(tab, 'Emulation.setDeviceMetricsOverride', { width, height, screenWidth: width, screenHeight: height, deviceScaleFactor: e.dpr, mobile: e.mobile, scale });
+    // The agent's override as it sent it; the user's: the screen has the size of the viewport, as in Chrome's responsive mode.
+    const p = e.by === 'agent'
+      ? { width, height, deviceScaleFactor: e.dpr, mobile: e.mobile, ...e.params, scale }
+      : { width, height, screenWidth: width, screenHeight: height, deviceScaleFactor: e.dpr, mobile: e.mobile, scale };
+    tab.emulationSent = this.cdp(tab, 'Emulation.setDeviceMetricsOverride', p);
   }
 
   private async cdp(tab: Tab, method: string, params?: object): Promise<void> {

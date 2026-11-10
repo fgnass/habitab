@@ -34,15 +34,13 @@ api.onState(state => {
   const own = e.by !== 'agent';
   for (const b of $('bps').children) b.classList.toggle('on', own && (b.dataset.width ? !e.fillWidth && e.width === Number(b.dataset.width) : !!(e.fillWidth && e.fillHeight)));
   // The page is shown smaller than its viewport: say by how much.
-  const scale = e.zoom === 'fit' ? e.scale : e.zoom;
+  const scale = e.zoom === 'fit' || e.by === 'agent' ? e.scale : e.zoom;
   const scaled = typeof scale === 'number' && Math.round(scale * 100) !== 100;
   $('zoom').textContent = scaled ? `· ${Math.round(scale * 100)} %` : '';
   $('zoom').title = 'The page is scaled to fit the free space';
   $('zoom').classList.toggle('hidden', !scaled);
   $('by').classList.toggle('hidden', e.by !== 'agent');
-  $('by').textContent = e.cut ? '· set by the agent, cut off' : '· set by the agent';
-  $('by').title = e.cut ? 'The page does not fit the free space, so a part of it is not visible. Change the size or make the window larger to see all of it.' : '';
-  $('by').classList.toggle('cut', !!e.cut);
+  $('by').textContent = '· set by the agent';
 });
 
 for (const id of ['w', 'h']) {

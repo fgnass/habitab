@@ -172,16 +172,13 @@ function layout(): void {
         // Responsive mode: the emulated viewport below the bar. Filled dimensions
         // take the free space; with zoom "fit" a larger viewport is scaled down.
         const room = { width: Math.max(50, pageWidth - 2 * FRAME_SIDE), height: Math.max(50, area.height - RBAR - FRAME_TOP - FRAME_BOTTOM) };
-        if (e.by === 'user') {
-          const width = e.fillWidth ? room.width : e.width, height = e.fillHeight ? room.height : e.height;
-          const scale = e.zoom === 'fit' ? Math.min(1, room.width / width, room.height / height) : e.zoom;
-          manager.applyEmulation(t, width, height, Math.max(0.1, Math.round(scale * 1000) / 1000));
-        }
+        // The agent's size is always shown whole: scaled down when it does not fit (the agent sees no change).
+        const width = e.by === 'user' && e.fillWidth ? room.width : e.width, height = e.by === 'user' && e.fillHeight ? room.height : e.height;
+        const fit = Math.min(1, room.width / width, room.height / height);
+        const wanted = e.zoom === 'fit' ? fit : e.by === 'agent' ? Math.min(e.zoom, fit) : e.zoom;
+        manager.applyEmulation(t, width, height, Math.max(0.1, Math.round(wanted * 1000) / 1000));
         const scale = e.scale ?? 1;
         const w = Math.round(e.width * scale), h = Math.round(e.height * scale);
-        // The agent's size is not scaled (its screenshots would get smaller): the bar says when it is cut off.
-        const cut = e.by === 'agent' && (w > room.width || h > room.height);
-        if (cut !== !!e.cut) { e.cut = cut; framesChanged = true; }
         const pos = centered(w, area.y + RBAR + FRAME_TOP);
         t.view.setBounds({ ...pos, width: w, height: h });
         const frame = { x: pos.x - area.x, y: pos.y - area.y, width: w, height: h, scale };
