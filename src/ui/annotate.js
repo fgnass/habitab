@@ -255,7 +255,8 @@ mic.addEventListener('pointerdown', e => {
   try { mic.setPointerCapture(e.pointerId); } catch {}
   startDictation();
 });
-for (const type of ['pointerup', 'pointercancel']) mic.addEventListener(type, () => { if (dictation) endDictation(false); });
+// A lost capture is a lost release too (e.g. a dialog of macOS took the pointer).
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) mic.addEventListener(type, () => { if (dictation) endDictation(false); });
 mic.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); });
 
 // Space in the field.
@@ -315,12 +316,25 @@ function render(d) {
   text.setSelectionRange(cursor, cursor);
 }
 
-/** Ends the recognition: the words so far become final (`discard`: nothing more arrives). */
+/**
+ * Ends the recognition: the words so far become final. `discard` (the form
+ * closes): it ends now, also while a stop still waits for the last words.
+ */
 function endDictation(discard) {
-  if (!dictation || dictation.stopping) return;
-  dictation.stopping = true;
-  if (discard) { api.speech.abort(dictation.id); dictation = null; document.body.classList.remove('listening'); setState(''); }
-  else { api.speech.stop(dictation.id); setState('Finishing…'); }
+  const d = dictation;
+  if (!d) return;
+  if (discard) {
+    api.speech.abort(d.id);
+    dictation = null;
+    document.body.classList.remove('listening');
+    $('meter').firstElementChild.style.width = '0';
+    setState('');
+    return;
+  }
+  if (d.stopping) return;
+  d.stopping = true;
+  api.speech.stop(d.id);
+  setState('Finishing…');
 }
 
 const DICTATION_ERRORS = {

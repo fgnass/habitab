@@ -133,6 +133,8 @@ final class AnalyzerRecognition: Recognition {
   private var continuation: AsyncStream<AnalyzerInput>.Continuation?
   private var resultsTask: Task<Void, Never>?
   private var ended = false
+  /// The audio source runs ("started" was sent).
+  private var listening = false
   private var onEnd: () -> Void
 
   init(id: Int, onEnd: @escaping () -> Void) {
@@ -149,12 +151,14 @@ final class AnalyzerRecognition: Recognition {
     guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: lang)) else {
       return fail("language-not-supported", "No on-device model for \(lang)")
     }
+    if ended { return }
     let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: interim ? [.volatileResults] : [], attributeOptions: [.transcriptionConfidence])
     self.transcriber = transcriber
     switch await AssetInventory.status(forModules: [transcriber]) {
     case .unsupported: return fail("language-not-supported", "No on-device model for \(lang)")
     case .installed: break
     default:
+      if ended { return }
       emit(["type": "downloading", "id": id])
       do { try await AssetInventory.assetInstallationRequest(supporting: [transcriber])?.downloadAndInstall() }
       catch { return fail("language-not-supported", "The model for \(lang) could not be installed: \(error.localizedDescription)") }
@@ -163,11 +167,13 @@ final class AnalyzerRecognition: Recognition {
     guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
       return fail("audio-capture", "No audio format for the recognizer")
     }
+    if ended { return }
     let analysisContext = AnalysisContext()
     if !context.isEmpty { analysisContext.contextualStrings = [.general: context] }
     let analyzer = SpeechAnalyzer(modules: [transcriber])
     self.analyzer = analyzer
     try? await analyzer.setContext(analysisContext)
+    if ended { await analyzer.cancelAndFinishNow(); return }
     let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
     self.continuation = continuation
     resultsTask = Task { [weak self] in
@@ -185,7 +191,8 @@ final class AnalyzerRecognition: Recognition {
     }
     do { try await analyzer.start(inputSequence: stream) }
     catch { return fail("audio-capture", "The recognizer did not start: \(error.localizedDescription)") }
-    if ended { return }
+    // Stopped or aborted while the recognizer got ready: the microphone does not open.
+    if ended { await analyzer.cancelAndFinishNow(); return }
     let sink: (AVAudioPCMBuffer) -> Void = { [weak self] buffer in self?.continuation?.yield(AnalyzerInput(buffer: buffer)) }
     let started: Bool
     if let file {
@@ -195,11 +202,14 @@ final class AnalyzerRecognition: Recognition {
       started = source.startMicrophone(format: format, sink: sink)
     }
     guard started else { return fail("audio-capture", "No microphone is available") }
+    listening = true
     emit(["type": "started", "id": id])
   }
 
   func stop() {
     guard !ended else { return }
+    // Before the microphone opened there is nothing to finish: no audio, no text.
+    guard listening else { return abort() }
     source.stop()
     continuation?.finish()
     Task {
@@ -240,6 +250,8 @@ final class LegacyRecognition: Recognition {
   private var task: SFSpeechRecognitionTask?
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var ended = false
+  /// The audio source runs ("started" was sent).
+  private var listening = false
   private var onEnd: () -> Void
 
   init(id: Int, onEnd: @escaping () -> Void) {
@@ -251,6 +263,8 @@ final class LegacyRecognition: Recognition {
   func start(lang: String, interim: Bool, context: [String], file: String?) {
     SFSpeechRecognizer.requestAuthorization { [self] status in
       DispatchQueue.main.async { [self] in
+        // Stopped or aborted while macOS asked: the microphone does not open.
+        if ended { return }
         guard status == .authorized else { return fail("not-allowed", "Speech recognition is not allowed") }
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: lang)), recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else {
           return fail("language-not-supported", "No on-device recognition for \(lang)")
@@ -283,13 +297,16 @@ final class LegacyRecognition: Recognition {
           started = source.startMicrophone(format: format, sink: sink)
         }
         guard started else { return fail("audio-capture", "No microphone is available") }
+        listening = true
         emit(["type": "started", "id": id])
       }
     }
   }
 
   func stop() {
-    guard !ended, let request else { return }
+    guard !ended else { return }
+    // Before the microphone opened there is nothing to finish: no audio, no text.
+    guard let request, listening else { return abort() }
     source.stop()
     self.request = nil
     request.endAudio()

@@ -4,7 +4,7 @@ import type { BaseWindow, WebContentsView } from 'electron';
 import type { SessionManager } from './sessions';
 import { uiState } from './ui-state';
 
-export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: string, tab?: number) => void; layout: () => void; publish: () => void; upstreamUrl: () => string; action: (name: string, ...args: any[]) => Promise<unknown>; quit: () => void; clipboard: () => string; background: () => WebContentsView; errors: () => string[]; annotating: () => boolean; annotateKept: () => number; findText: () => string | null; lastShare: () => unknown; view: (name: string) => WebContentsView | undefined; speechResult: (text: string, final: boolean) => boolean; speechLevel: (level: number) => boolean; speechPermission: (wait: boolean) => void }): void {
+export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: string, tab?: number) => void; layout: () => void; publish: () => void; upstreamUrl: () => string; action: (name: string, ...args: any[]) => Promise<unknown>; quit: () => void; clipboard: () => string; background: () => WebContentsView; errors: () => string[]; annotating: () => boolean; annotateKept: () => number; findText: () => string | null; lastShare: () => unknown; view: (name: string) => WebContentsView | undefined; speechResult: (text: string, final: boolean) => boolean; speechLevel: (level: number) => boolean; speechPermission: (wait: boolean) => void; speechStall: (on: boolean) => void }): void {
   const out = (o: object) => process.stdout.write(JSON.stringify({ ...o, at: Date.now() }) + '\n');
   out({ ready: true, chrome: process.versions.chrome, upstream: ui.upstreamUrl() });
   // The window must never take focus on its own (agents work in the background).
@@ -63,6 +63,7 @@ export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: st
       else if (cmd === 'speech' && id === 'level') out({ speech: ui.speechLevel(Number(arg)) });
       // `speech permission wait|answer`: the microphone question of the dictation stays open, or gets its (allowing) answer.
       else if (cmd === 'speech' && id === 'permission') ui.speechPermission(arg === 'wait');
+      else if (cmd === 'speech' && id === 'stall') ui.speechStall(arg === 'on');
       else if (cmd === 'speech') out({ speech: ui.speechResult([arg, ...rest].join(' '), id === 'final') });
       else if (cmd === 'quit') ui.quit();
       // As if the user switched to another app.

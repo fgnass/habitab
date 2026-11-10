@@ -523,7 +523,6 @@ if (process.platform === 'darwin') {
   await until('onend');
 
   // Dictation in the marking overlay: holding Space talks, the words go to the cursor, the agent learns they were dictated.
-  const askedV = nextNote();
   await control(`sendelement ${sb.id} 20 20`);
   await sleep(500);
   const key = (type, extra = '') => `t.dispatchEvent(new KeyboardEvent('${type}', { key: ' ', bubbles: true${extra} }))`;
@@ -554,7 +553,26 @@ if (process.platform === 'darwin') {
   await sleep(300);
   const late = await uiEval('annotator', `document.body.className + '|' + document.getElementById('text').value`);
   check(!late?.result?.includes('listening') && late?.result?.endsWith('|Make it green please'), 'dictation: the late answer of macOS starts no recognition', JSON.stringify(late?.result ?? late?.error));
+  // A recognition that does not end after the release (a helper that hangs):
+  // it ends after a time, and closing the form ends it at once.
+  await control('speech stall on');
+  const listenState = `document.body.className + '|' + document.getElementById('dictText').textContent`;
+  await uiEval('annotator', `(() => { ${mic('pointerdown')}; return 1; })()`);
+  await sleep(200);
+  const stalled = await uiEval('annotator', `(() => { ${mic('pointerup')}; return new Promise(r => setTimeout(() => r(${listenState}), 300)); })()`);
+  check(stalled?.result?.includes('listening') && stalled?.result?.includes('Finishing'), 'dictation: a stop without an end waits for the last words', JSON.stringify(stalled?.result ?? stalled?.error));
+  await sleep(5500);
+  const timedOut = await uiEval('annotator', listenState);
+  check(!timedOut?.result?.includes('listening'), 'dictation: a stop without an end ends after a few seconds', JSON.stringify(timedOut?.result ?? timedOut?.error));
+  await uiEval('annotator', `(() => { ${mic('pointerdown')}; return 1; })()`);
+  await sleep(200);
+  await uiEval('annotator', `(() => { ${mic('pointerup')}; return 1; })()`);
+  await sleep(200);
+  const askedV = nextNote();
   await uiEval('annotator', `document.getElementById('send').click()`);
+  const closed = await uiEval('annotator', listenState);
+  check(!closed?.result?.includes('listening'), 'dictation: closing the form ends a recognition that still finishes', JSON.stringify(closed?.result ?? closed?.error));
+  await control('speech stall off');
   const answerV = await askedV;
   check(answerV.text.includes('The user says (dictated: a word may be misheard): "Make it green please"'), 'dictation: the agent learns that the comment was dictated', answerV.text.replace(/\n/g, ' | ').slice(0, 120));
 }

@@ -30,6 +30,9 @@ export type SpeechEvent =
   | { type: 'end' }
   | { type: 'error'; error: string; message: string };
 
+/** How long a recognition may take to end after a stop (the last words become final) or an abort. */
+const STOP_MS = 5000, ABORT_MS = 1500;
+
 export interface SpeechOptions { lang: string; interim: boolean; context: string[] }
 
 export class SpeechService {
@@ -39,6 +42,8 @@ export class SpeechService {
   private buffer = '';
   private nextId = 1;
   private active?: { id: number; onEvent: (e: SpeechEvent) => void; ended: boolean };
+  /** Tests: stop and abort get no "end" (a helper that hangs). */
+  private stall = false;
   /** Answers to "available" and "install" requests. */
   private pending = new Map<number, (r: any) => void>();
 
@@ -58,14 +63,25 @@ export class SpeechService {
   /** Finishes: pending text becomes final, then "end". */
   stop(id: number): void {
     if (this.active?.id !== id) return;
-    if (this.fake) { this.deliver(id, { type: 'end' }); return; }
+    this.endWithin(id, STOP_MS);
+    if (this.fake) { if (!this.stall) this.deliver(id, { type: 'end' }); return; }
     this.send({ type: 'stop', id });
   }
 
   abort(id: number): void {
     if (this.active?.id !== id) return;
-    if (this.fake) { this.deliver(id, { type: 'end' }); return; }
+    this.endWithin(id, ABORT_MS);
+    if (this.fake) { if (!this.stall) this.deliver(id, { type: 'end' }); return; }
     this.send({ type: 'abort', id });
+  }
+
+  /** A recognition that does not end in time ends here (the helper is told to abort it): the microphone must not stay open. */
+  private endWithin(id: number, ms: number): void {
+    setTimeout(() => {
+      if (this.active?.id !== id || this.active.ended) return;
+      log(`speech: recognition ${id} did not end ${ms} ms after stop/abort; it ends now`);
+      this.endActive('aborted', 'The recognition did not end');
+    }, ms);
   }
 
   /** Whether a language can be recognized: available, downloadable, downloading, unavailable. */
@@ -94,6 +110,9 @@ export class SpeechService {
     this.deliver(this.active.id, { type: 'level', level });
     return true;
   }
+
+  /** Test control: stop and abort get no "end" from the (fake) helper. */
+  fakeStall(on: boolean): void { this.stall = this.fake && on; }
 
   /** Test control: a result for the running recognition. */
   fakeResult(text: string, final: boolean): boolean {
