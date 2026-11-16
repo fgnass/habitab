@@ -64,11 +64,11 @@ Habitab.app (Electron)
      (WebGL, WebGPU). The pages count their draw calls; the GPU time is the
      GPU process's (macOS IO registry). With several drawing tabs, each one
      holds its animation frames for a moment in turn, and the drop is its
-     share (HABITAB_GPU_TRACE=1 logs the numbers). A tab above half the GPU
-     for 15 s gets paused: its animation frames wait (then its timers too,
-     if it keeps drawing; if even that does not help, its renderer is
-     stopped). The agent gets a note; Resume Animation (or Reload Page) in
-     the top bar lets it run again, and a new page load starts it anew
+     share (HABITAB_GPU_TRACE=1 logs the numbers). Habitab does not stop
+     such a page by itself. The top bar shows "GPU 60% · Pause" for it: a
+     click holds its animation frames and timers (the page shows its last
+     frame), and the agent gets a note. Resume Animation in the top bar
+     lets it run again, and a new page load starts it anew
    • pages that do not respond: a renderer that uses most of a core gets a
      tiny script; a page that does not answer within 5 s shows "Not
      Responding · Stop Page" in the top bar and is stopped after 30 s (the

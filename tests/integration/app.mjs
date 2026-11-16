@@ -27,8 +27,6 @@ const env = bridgeEnv(tmp, {
   // Lower GPU limits: macOS gives the hidden test app less GPU time. The
   // heavy page of the GPU test is paused after the load per tab was checked.
   HABITAB_GPU_BUSY_MS: '150',
-  HABITAB_GPU_PAUSE_MS: '150',
-  HABITAB_GPU_PAUSE_AFTER_MS: '25000',
   HABITAB_HANG_STOP_MS: '6000',
 });
 // Fake Claude Code inbox socket (cross-session messaging): feedback notes arrive here.
@@ -112,14 +110,9 @@ const page = http.createServer((req, res) => {
     window.drawn = 0;
     const draw = () => { gl.drawArrays(gl.TRIANGLES, 0, 3); window.drawn++; };
     const frame = () => { draw(); requestAnimationFrame(frame); };
-    // ?timer: from setInterval; ?channel: from message events (neither waits for frames).
+    // ?timer: from setInterval (it does not wait for frames).
     if (location.search.includes('timer')) setInterval(draw, 16);
-    else if (location.search.includes('channel')) {
-      const ch = new MessageChannel();
-      let last = 0;
-      ch.port1.onmessage = () => { if (performance.now() - last > 16) { last = performance.now(); draw(); } ch.port2.postMessage(0); };
-      ch.port2.postMessage(0);
-    } else requestAnimationFrame(frame);</script>`);
+    else requestAnimationFrame(frame);</script>`);
   // A page whose JavaScript gets stuck in a loop after 3 s.
   if (req.url === '/hang') return res.end('<title>Hang</title><script>setTimeout(() => { for (;;); }, 3000)</script>');
   if (req.url === '/api/fail') { res.statusCode = 500; return res.end('fail'); }
@@ -963,16 +956,21 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
   const rows = (await uiEval('sidebar', `JSON.stringify([...document.querySelectorAll('.card')].map(c => [c.querySelector('.title').textContent, c.querySelector('.meta .gpu')?.textContent ?? '']))`))?.result;
   const labels = Object.fromEntries(JSON.parse(rows ?? '[]'));
   check(labels['GPU heavy'] === `GPU ${h}%` && labels['GPU light'] === '', 'the sidebar shows the load on the tab\'s row', rows);
-  // Too much for too long: Habitab pauses the page's animation and tells the agent.
-  let paused = 0;
-  for (let i = 0; i < 80 && !paused; i++) { await sleep(500); paused = (await front('gpu-heavy'))?.gpuPaused ?? 0; }
-  check(paused > 0 && !(await front('gpu-light'))?.gpuPaused, 'a tab with a high GPU load for long gets paused, the light one not', String(paused));
+  // Habitab does not pause the page by itself; the top bar offers it.
+  const hs = (await state()).sessions.find(s => s.projectPath.endsWith('gpu-heavy'));
+  await control(`select ${hs.id}`);
+  await sleep(4000);
+  check(!(await front('gpu-heavy'))?.gpuPaused && !inboxLines.some(l => l.type === 'user' && String(l.message.content).includes('/gpu-heavy')), 'a tab with a high GPU load is not paused by itself, and the agent gets no note');
+  const button = (await uiEval('topbar', `document.getElementById('gpu').classList.contains('hidden') ? '' : document.getElementById('gpuText').textContent`))?.result;
+  check(button?.includes('Pause'), 'the top bar offers to pause the page', button);
+  await control(`action ${hs.id} gpuPause`);
+  await sleep(300);
+  check((await front('gpu-heavy'))?.gpuPaused, 'Pause pauses the page');
   const note = inboxLines.filter(l => l.type === 'user').map(l => l.message.content).find(t => t.includes('/gpu-heavy'));
-  check(!!note && note.includes('paused the animation') && !note.includes('/gpu-light'), 'the agent gets a note about the paused page', note?.slice(0, 160));
+  check(!!note && note.includes('The user paused the animation') && !note.includes('/gpu-light'), 'the agent gets a note about the paused page', note?.slice(0, 160));
   const frames = async () => Number((await heavy.tool('evaluate_script', { pageId: await pageId(heavy), function: '() => "frames=" + window.drawn' })).text.match(/frames=(\d+)/)?.[1]);
   const f1 = await frames(); await sleep(600); const f2 = await frames();
   check(f1 === f2, 'the paused page draws no frames', `${f1} ${f2}`);
-  const hs = (await state()).sessions.find(s => s.projectPath.endsWith('gpu-heavy'));
   await control(`action ${hs.id} gpuResume`);
   await sleep(600);
   const f3 = await frames(); await sleep(600); const f4 = await frames();
@@ -984,33 +982,23 @@ check(!(await state()).sessions.find(s => s.id === sb.id).nav.emulation && vpa?.
   await heavy.close(); await light.close();
 }
 
-// A paused page that keeps drawing: its timers wait too; one that gets past
-// that is stopped (gpupause pauses it as if its load were too high).
-{ const tm = client('gpu-timer'), ch = client('gpu-channel');
-  await tm.initialize(); await ch.initialize();
+// A paused page that draws from timers: its timers wait too.
+{ const tm = client('gpu-timer');
+  await tm.initialize();
   await tm.tool('navigate_page', { pageId: await pageId(tm), url: `${base}/gpu-light?timer` });
-  await ch.tool('navigate_page', { pageId: await pageId(ch), url: `${base}/gpu-light?channel` });
   const sess = async name => (await state()).sessions.find(s => s.projectPath.endsWith(name));
-  const front = async name => (await sess(name))?.tabs.find(t => t.active);
   const drawn = async name => { await control(`select ${(await sess(name)).id}`); return Number((await uiEval('page', 'window.drawn'))?.result); };
   await sleep(1500);
   await control(`gpupause ${(await sess('gpu-timer')).id}`);
-  await control(`gpupause ${(await sess('gpu-channel')).id}`);
-  let stopped = false;
-  for (let i = 0; i < 40 && !stopped; i++) { await sleep(500); stopped = !!(await front('gpu-channel'))?.gpuStopped; }
-  const ft = await front('gpu-timer');
+  await sleep(300);
   const d1 = await drawn('gpu-timer'); await sleep(600); const d2 = await drawn('gpu-timer');
-  check(ft?.gpuPaused > 0 && !ft.gpuStopped && d1 > 0 && d1 === d2, 'a paused page that draws from timers: its timers wait too', `${d1} ${d2}`);
-  check(stopped, 'a page that keeps drawing while paused gets stopped');
-  const note = inboxLines.filter(l => l.type === 'user').map(l => l.message.content).find(t => t.includes('/gpu-light?channel') && t.includes('stopped the page'));
-  check(!!note, 'the agent gets a note about the stopped page', note?.slice(0, 160));
-  await control(`action ${(await sess('gpu-channel')).id} gpuResume`);
-  let back = false;
-  for (let i = 0; i < 20 && !back; i++) { await sleep(500); const f = await front('gpu-channel'); back = !!f && !f.gpuPaused && !f.gpuStopped; }
-  check(back, 'Reload Page loads the stopped page again, without a pause');
+  check(d1 > 0 && d1 === d2, 'a paused page that draws from timers: its timers wait too', `${d1} ${d2}`);
+  await control(`action ${(await sess('gpu-timer')).id} gpuResume`);
+  await sleep(300);
+  const d3 = await drawn('gpu-timer'); await sleep(600); const d4 = await drawn('gpu-timer');
+  check(d4 > d3, 'Resume Animation lets its timers run again', `${d3} ${d4}`);
   await tm.tool('navigate_page', { pageId: await pageId(tm), url: `${base}/z1` });
-  await ch.tool('navigate_page', { pageId: await pageId(ch), url: `${base}/z1` });
-  await tm.close(); await ch.close();
+  await tm.close();
 }
 
 // A page that does not respond: it shows as such, Habitab stops it after a

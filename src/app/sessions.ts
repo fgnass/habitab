@@ -71,9 +71,6 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const GPU_BUSY_MS = Number(process.env.HABITAB_GPU_BUSY_MS) || 250;
 /** A page that does not answer for this long (while its renderer is busy) gets stopped (see hangCheck). */
 const HANG_STOP_MS = Number(process.env.HABITAB_HANG_STOP_MS) || 30_000;
-/** A tab whose share stays above this (ms/s) for GPU_PAUSE_AFTER ms gets paused (see gpuCheck). */
-const GPU_PAUSE_MS = Number(process.env.HABITAB_GPU_PAUSE_MS) || 500;
-const GPU_PAUSE_AFTER = Number(process.env.HABITAB_GPU_PAUSE_AFTER_MS) || 15_000;
 
 /** The GPU load the UI shows: percent of the GPU in steps of 10 while the tab is busy, else 0. */
 export const gpuShown = (t: Tab) => t.gpuBusy ? Math.min(100, Math.max(10, Math.round((t.gpu ?? 0) / 100) * 10)) : 0;
@@ -107,24 +104,13 @@ export interface Tab {
   gpuBusy?: boolean;
   /** Until then the page's draw reports do not count: it held its frames (see gpuCheck). */
   holdUntil?: number;
-  /** Since then the tab's share is above the pause limit, in that many measurements in a row (see gpuCheck). */
-  gpuSince?: number;
-  gpuHits?: number;
-  /** Habitab paused the page (too much GPU load); the share it had in percent. */
-  gpuPaused?: number;
-  /** How hard: 1 animation frames, 2 also timers, 3 renderer stopped (see escalateGpu); since when. */
-  gpuLevel?: number;
-  gpuLevelAt?: number;
+  /** The user paused the page's animation (see pauseGpu). */
+  gpuPaused?: boolean;
   /** The page does not answer (its JavaScript runs without end), since then; a check is on its way. */
   hungSince?: number;
   pinging?: boolean;
   /** The page's renderer is gone (crashed or stopped, see stopPage): the tab is empty until it loads again. */
   gone?: string;
-  /** Draw calls the page still made while paused (last report), and when. */
-  pausedDraws?: number;
-  pausedDrawsAt?: number;
-  /** The user let the paused page run again: no pause until the next page loads. */
-  gpuAllowed?: boolean;
   /** Small JPEG of the tab for the sidebar (data URL). */
   thumb?: string;
   thumbTimer?: NodeJS.Timeout;
@@ -775,9 +761,8 @@ export class SessionManager {
     wc.on('did-navigate', () => {
       this.setTargetUrl(tab, '');
       // A new page runs its animation (page-preload.ts starts without a hold).
-      tab.gpuPaused = tab.gpuSince = tab.gpuLevel = tab.pausedDraws = undefined;
+      tab.gpuPaused = undefined;
       tab.gone = tab.hungSince = undefined;
-      tab.gpuAllowed = false;
       this.onChange();
     });
     // A new document starts with no problems, like the console without "Preserve log".
@@ -1642,7 +1627,7 @@ export class SessionManager {
     const tab = this.tabOf(webContentsId);
     if (!tab || !Number.isFinite(draws)) return;
     // The page draws less while it holds its frames for gpuCheck, and not at all while paused.
-    if (tab.gpuPaused) { tab.pausedDraws = draws; tab.pausedDrawsAt = Date.now(); draws = 0; }
+    if (tab.gpuPaused) draws = 0;
     else if (Date.now() < (tab.holdUntil ?? 0)) { tab.drawsAt = Date.now(); return; }
     tab.draws = draws;
     tab.drawsAt = Date.now();
@@ -1658,8 +1643,7 @@ export class SessionManager {
    * load goes down by (against the load before and after) is its share. A
    * share is shown until a newer one is found (30 s at most). A tab is busy
    * above 250 ms/s (a quarter of the GPU) and calm again below 100 ms/s.
-   * A share above 500 ms/s for 15 s (and in two measurements at least)
-   * pauses the page's animation (pauseGpu).
+   * Habitab does not pause a page by itself: the user can (pauseGpu).
    * Called every few seconds; a check takes up to 4 s.
    */
   async gpuCheck(): Promise<void> {
@@ -1676,7 +1660,6 @@ export class SessionManager {
       const before = gpuShown(t);
       t.gpu = ms;
       t.gpuAt = ms === undefined ? undefined : Date.now();
-      t.gpuHits = ms !== undefined && ms >= GPU_PAUSE_MS ? (t.gpuHits ?? 0) + 1 : 0;
       const v = ms ?? 0;
       if (t.gpuBusy ? v < GPU_BUSY_MS * 0.4 : v > GPU_BUSY_MS) t.gpuBusy = !t.gpuBusy;
       return gpuShown(t) !== before;
@@ -1684,7 +1667,6 @@ export class SessionManager {
     let changed = false;
     for (const t of tabs) {
       if (!drawing.includes(t) || now - (t.gpuAt ?? 0) > 30_000) changed = set(t, undefined) || changed;
-      if (this.escalateGpu(t, now)) changed = true;
     }
     const pid = app.getAppMetrics().find(m => m.type === 'GPU')?.pid;
     if (!drawing.length || !pid) { if (changed) this.onChange(); return; }
@@ -1716,82 +1698,36 @@ export class SessionManager {
     } else {
       for (const t of drawing) changed = set(t, undefined) || changed;
     }
-    for (const t of drawing) {
-      if (t.gpuAllowed || (t.gpu ?? 0) < GPU_PAUSE_MS) { t.gpuSince = undefined; continue; }
-      t.gpuSince ??= now;
-      const page = this.pageOf(t.id);
-      // Two measurements at least: one wrong one does not stop a page.
-      if (page && now - t.gpuSince >= GPU_PAUSE_AFTER && (t.gpuHits ?? 0) >= 2) { this.pauseGpu(page.s, t); changed = true; }
-    }
     if (changed) this.onChange();
   }
 
   /**
-   * The page has loaded the GPU too much for too long: its animation frames
-   * wait (page-preload.ts; the page shows its last frame) until it loads
-   * again or the user resumes it (resumeGpu). The agent gets a note.
+   * The user pauses the page's animation (top bar): its animation frames and
+   * timers wait (page-preload.ts; the page shows its last frame) until the
+   * user resumes it (resumeGpu) or the page loads anew. The agent gets a note.
+   * Pages that draw from message events, workers or a loop of their own go on.
    */
   pauseGpu(s: Session, tab: Tab): void {
     const wc = tab.view.webContents;
-    tab.gpuPaused = gpuShown(tab) || 10;
-    tab.gpuLevel = 1;
-    tab.gpuLevelAt = Date.now();
-    tab.gpuSince = tab.gpu = tab.gpuAt = undefined;
-    tab.gpuHits = 0;
+    if (tab.gpuPaused || tab.gone || wc.isDestroyed()) return;
+    tab.gpuPaused = true;
+    tab.gpu = tab.gpuAt = undefined;
     tab.gpuBusy = false;
     tab.draws = 0;
-    wc.send('habitab:hold-frames', 1);
-    log(`gpu: paused ${wc.getURL()} (${tab.gpuPaused} %)`);
+    wc.send('habitab:hold-frames', 2);
+    log(`gpu: the user paused ${wc.getURL()}`);
     const title = wc.getTitle();
     this.pushToAgent(s, [
       NOTE_HEAD,
-      `The browser paused the animation of the page ${wc.getURL()}${title ? ` ("${title}")` : ''}. Its drawing used about ${tab.gpuPaused} % of the GPU for more than ${Math.round(GPU_PAUSE_AFTER / 1000)} s, which slows down the user's whole computer.`,
-      "While paused, the page's requestAnimationFrame callbacks wait (and its timers too, if it keeps drawing): the page shows its last frame, also in screenshots. It runs again when the page loads anew (reload or navigation), or when the user resumes it. If it still keeps drawing, the browser stops the page.",
-      'Make the drawing cheaper before you go on: for example a lower resolution or pixel ratio, less work per pixel or vertex, fewer passes, or drawing only when something changes. Then reload the page and check that it runs without a high load.',
+      `The user paused the animation of the page ${wc.getURL()}${title ? ` ("${title}")` : ''}. Its requestAnimationFrame callbacks and timers wait: the page shows its last frame, also in screenshots. It runs again when the page loads anew (reload or navigation), or when the user resumes it.`,
     ].join('\n'));
     this.onChange();
   }
 
-  /**
-   * A paused page that still draws (10 calls a second or more, after the
-   * hold took effect): level 2 holds its timers too, level 3 stops its
-   * renderer (the tab is empty until it loads again) and tells the agent.
-   * Pages that draw from message events, workers or a loop of their own
-   * get past the first two levels.
-   */
-  private escalateGpu(tab: Tab, now: number): boolean {
-    const level = tab.gpuLevel ?? 0;
-    if (!tab.gpuPaused || level >= 3) return false;
-    // A report that covers the time after the last step only (reports come once a second).
-    if ((tab.pausedDraws ?? 0) < 10 || (tab.pausedDrawsAt ?? 0) < (tab.gpuLevelAt ?? 0) + 1_100 || now - (tab.pausedDrawsAt ?? 0) > 2_500) return false;
-    const wc = tab.view.webContents;
-    tab.gpuLevel = level + 1;
-    tab.gpuLevelAt = now;
-    tab.pausedDraws = 0;
-    if (tab.gpuLevel === 2) {
-      wc.send('habitab:hold-frames', 2);
-      log(`gpu: holds the timers of ${wc.getURL()} too`);
-      return true;
-    }
-    const url = wc.getURL(), title = wc.getTitle();
-    log(`gpu: stops ${url}`);
-    tab.gone = 'stopped';
-    wc.forcefullyCrashRenderer();
-    const page = this.pageOf(tab.id);
-    if (page) this.pushToAgent(page.s, [
-      NOTE_HEAD,
-      `The browser stopped the page ${url}${title ? ` ("${title}")` : ''}: it kept drawing and loading the GPU although its animation frames and timers were paused. The tab is empty until it loads again (reload or navigation).`,
-      'Find what keeps drawing (for example a loop driven by message events, a worker or a loop of its own) and make the drawing cheaper before you load the page again.',
-    ].join('\n'));
-    return true;
-  }
-
-  /** The user lets the paused page run again (a stopped one loads again); it is not paused again until it loads anew. */
+  /** The user lets the paused page run again. */
   resumeGpu(tab: Tab): void {
     if (!tab.gpuPaused) return;
-    if (tab.gpuLevel === 3) { tab.view.webContents.reload(); return; }
-    tab.gpuPaused = tab.gpuLevel = undefined;
-    tab.gpuAllowed = true;
+    tab.gpuPaused = undefined;
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.send('habitab:hold-frames', 0);
     this.onChange();
   }
@@ -1804,7 +1740,8 @@ export class SessionManager {
     try { return await fn(); } finally {
       // The page's next report still covers part of the hold.
       tab.holdUntil = Date.now() + 1_200;
-      if (!wc.isDestroyed()) wc.send('habitab:hold-frames', false);
+      // The user may have paused the page meanwhile: it stays paused.
+      if (!wc.isDestroyed()) wc.send('habitab:hold-frames', tab.gpuPaused ? 2 : 0);
     }
   }
 

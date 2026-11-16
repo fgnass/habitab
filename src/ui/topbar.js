@@ -45,7 +45,7 @@ api.onState(state => {
       : "This page uses a lot of CPU. The agent's debugger slows down WebAssembly and audio worklets. Click to pause it while you test (for all tabs of this project).";
   }
   // The page does not respond (stop it), or its renderer is gone (load it again). A GPU stop has its own button.
-  const hung = !!nav?.hung, gone = !!nav?.gone && !nav?.gpuPaused;
+  const hung = !!nav?.hung, gone = !!nav?.gone;
   $('page').classList.toggle('hidden', !hung && !gone);
   if (hung || gone) {
     const icon = hung ? 'triangle-alert' : 'rotate-cw';
@@ -55,15 +55,17 @@ api.onState(state => {
       ? 'The JavaScript of this page does not respond (most likely a loop that does not end). Habitab stops it after a while by itself. Click to stop it now; the agent gets a note.'
       : 'This page stopped (its process ended). Click to load it again.';
   }
-  // Habitab paused the page's animation for its GPU load.
-  $('gpu').classList.toggle('hidden', !nav?.gpuPaused);
-  if (nav?.gpuPaused) {
-    const icon = nav.gpuStopped ? 'rotate-cw' : 'play';
+  // A page with a high GPU load: the user can pause its animation, and let it run again.
+  const gpuPaused = !!nav?.gpuPaused, gpuBusy = !!nav?.gpu;
+  $('gpu').classList.toggle('hidden', !gpuPaused && !gpuBusy);
+  $('gpu').classList.toggle('on', gpuPaused);
+  if (gpuPaused || gpuBusy) {
+    const icon = gpuPaused ? 'play' : 'pause';
     if ($('gpuIcon').dataset.name !== icon) { $('gpuIcon').replaceChildren(window.icon(icon)); $('gpuIcon').dataset.name = icon; }
-    $('gpuText').textContent = nav.gpuStopped ? 'Reload Page' : 'Resume Animation';
-    $('gpu').title = nav.gpuStopped
-      ? `Habitab stopped this page: it used about ${nav.gpuPaused} % of the GPU and kept drawing while paused. The agent got a note. Click to load it again.`
-      : `Habitab paused the animation of this page: it used about ${nav.gpuPaused} % of the GPU for a while, which slows down your computer. The agent got a note. Click to let it run again.`;
+    $('gpuText').textContent = gpuPaused ? 'Resume Animation' : `GPU ${nav.gpu}% · Pause`;
+    $('gpu').title = gpuPaused
+      ? 'You paused the animation of this page. Click to let it run again.'
+      : `This page uses about ${nav.gpu} % of the GPU, which can slow down your computer. Click to pause its animation; the agent gets a note.`;
   }
   // Console errors of the page: the button opens the console, its context menu sends them.
   const n = nav?.newProblems ?? 0;
@@ -107,7 +109,7 @@ $('annotate').onclick = () => api.action('annotate');
 $('hold').onclick = () => api.action('hold');
 $('fork').onclick = () => api.action('fork');
 $('debugger').onclick = () => api.action('debugger');
-$('gpu').onclick = () => api.action('gpuResume');
+$('gpu').onclick = () => api.action(lastNav?.gpuPaused ? 'gpuResume' : 'gpuPause');
 $('page').onclick = () => api.action(lastNav?.hung ? 'stopPage' : 'reload');
 $('problems').onclick = () => api.action('problems');
 $('problems').oncontextmenu = e => { e.preventDefault(); api.action('problemsMenu', Math.round(e.clientX), Math.round(e.clientY)); };

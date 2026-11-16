@@ -349,7 +349,8 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
       if (s.active.debuggerPaused) return manager.pauseDebugger(s, s.active, false);
       return manager.setPausesDebugger(s, true);
     }
-    // Top bar: the page Habitab paused for its GPU load runs again.
+    // Top bar: pause the animation of the front tab (high GPU load), or let it run again.
+    case 'gpuPause': return s?.active && manager.pauseGpu(s, s.active);
     case 'gpuResume': return s?.active && manager.resumeGpu(s.active);
     case 'persistentProfile': { const x = manager.sessions.get(args[0]); if (x) { await manager.togglePersistentProfile(x); layout(); publish(); } return; }
     case 'sidebar': return toggleSidebarWidth();
