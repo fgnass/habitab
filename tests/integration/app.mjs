@@ -691,6 +691,26 @@ await control(`action ${sb.id} annotate false`);
 await sleep(200);
 check((await state()).sessions.find(s => s.id === sb.id).held === false, 'marking: the agent goes on when the overlay closes');
 
+// ⌥ held while marking: the mouse goes on to the page (hover, click); without ⌥ it marks.
+{ await control(`action ${sb.id} annotate true`);
+  await sleep(300);
+  await uiEval('page', `(() => { window.__through = []; for (const t of ['mousemove', 'mousedown', 'click']) document.addEventListener(t, e => __through.push(t + (e.altKey ? '+alt' : '')), true); return 1; })()`);
+  const pe = (type, alt, x = 40, y = 40) => `document.dispatchEvent(new PointerEvent('${type}', { bubbles: true, clientX: ${x}, clientY: ${y}, button: 0, pointerId: 1, altKey: ${alt}, detail: 1 }))`;
+  await uiEval('annotator', `(() => { ${pe('pointermove', true)}; ${pe('pointerdown', true, 42, 42)}; ${pe('pointerup', true, 42, 42)}; ${pe('pointermove', false, 60, 60)}; return document.getElementById('form').style.display; })()`);
+  await sleep(400);
+  const hits = (await uiEval('page', `__through.join()`))?.result ?? '';
+  const form = (await uiEval('annotator', `document.getElementById('form').style.display`))?.result;
+  check(/mousemove/.test(hits) && /mousedown/.test(hits) && /click/.test(hits) && !/alt/.test(hits) && form !== 'block',
+    'marking with ⌥: the page gets the mouse (without ⌥ as modifier), no area is marked', `${hits} | form ${form}`);
+  const n = hits.split(',').filter(x => x === 'mousemove').length;
+  await uiEval('annotator', `(() => { ${pe('pointermove', false, 80, 80)}; return 1; })()`);
+  await sleep(300);
+  const after = ((await uiEval('page', `__through.join()`))?.result ?? '').split(',').filter(x => x === 'mousemove').length;
+  check(after === n, 'marking without ⌥: the page gets no mouse moves', `${n} → ${after}`);
+  await control(`action ${sb.id} annotate false`);
+  await sleep(200);
+}
+
 // Without an inbox socket there is no channel: feedback is kept for the clipboard
 { const g = client('gamma-plain', 'gemini');
   await g.initialize();

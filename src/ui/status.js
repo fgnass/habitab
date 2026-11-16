@@ -151,9 +151,11 @@ function render() {
   let cells;
   // Marking mode: how it works, in place of the agent's call.
   // With kept notes: the next area, or send them all.
-  if (state.annotating && state.annotateKept) cells = [wide(`${state.annotateKept} marked · mark another area, or send them together` + (s?.held ? ' · the agent waits' : ''), 'hint'),
+  // ⌥ held: the mouse goes to the page (hover menus); not over an earlier screenshot.
+  const through = state.timelinePreview ? '' : ` · hold ${api.platform === 'darwin' ? '⌥' : 'Alt'} to use the page`;
+  if (state.annotating && state.annotateKept) cells = [wide(`${state.annotateKept} marked · mark another area, or send them together` + through + (s?.held ? ' · the agent waits' : ''), 'hint'),
     button('act own', 'send', `Send ${state.annotateKept}`, 'Send all notes as one message (↵)', () => api.action('annotateSend')), el('span', 'state esc', 'Esc discards all')];
-  else if (state.annotating) cells = [wide((state.timelinePreview ? 'Mark an area of this earlier screenshot' : 'Mark an area of the page') + (s?.held ? ' · the agent waits' : ''), 'hint'), el('span', 'state esc', 'Esc to cancel')];
+  else if (state.annotating) cells = [wide((state.timelinePreview ? 'Mark an area of this earlier screenshot' : 'Mark an area of the page') + through + (s?.held ? ' · the agent waits' : ''), 'hint'), el('span', 'state esc', 'Esc to cancel')];
   else if (chosen) cells = lineCells(chosen.head);
   else if (state.notice) cells = [wide(state.notice, 'notice')];
   else if (state.download) cells = downloadCells(state.download);

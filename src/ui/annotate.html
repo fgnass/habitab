@@ -8,6 +8,8 @@
   #shade { position: fixed; inset: 0; background: rgba(0, 0, 0, .18); }
   #rect { position: fixed; display: none; border: 2px solid var(--accent); border-radius: 3px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .28); background: transparent; }
   body.has-rect #shade { display: none; }
+  /* ⌥ held: the mouse goes to the page (see annotate.js). */
+  body.through, body.through .note .num { cursor: default; }
   /* Kept notes: their area and number (a click on it opens the note again). */
   .note { position: fixed; border: 2px solid var(--accent); border-radius: 3px; background: color-mix(in srgb, var(--accent) 8%, transparent); pointer-events: none; }
   .note .num { position: absolute; top: -11px; left: -11px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--accent); color: #fff;

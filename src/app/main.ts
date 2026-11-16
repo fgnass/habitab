@@ -367,6 +367,8 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'annotateMark': return s?.active && annotateMark(s.active, args[0]);
     case 'annotateDrop': return void marks.delete(args[0]);
     case 'annotateKept': annotateKept = args[0]; return publish();
+    // ⌥ held in the overlay: the user's mouse goes on to the page (a hover menu can open), in view coordinates of the page.
+    case 'annotatePointer': return void (annotating && !timelinePreview && s?.active && annotatePointer(s.active, args[0]));
     // The status line's Send: the overlay sends its marks.
     case 'annotateSend': return void (annotating && !annotator.webContents.isDestroyed() && annotator.webContents.send('annotate-send'));
     case 'annotateSubmit': return s?.active && annotateSubmit(s, s.active, args[0]);
@@ -843,6 +845,16 @@ function annotateMark(tab: Tab, m: { id: number; rect: Electron.Rectangle }): vo
   const done = captureMark(tab, m.rect);
   done.catch(() => {}); // A mark that is cancelled is never awaited.
   marks.set(m.id, { tab, rect: m.rect, done });
+}
+
+type PagePointer = { type: 'mouseMove' | 'mouseDown' | 'mouseUp' | 'mouseWheel'; x: number; y: number; button?: 'left' | 'middle'; clickCount?: number; deltaX?: number; deltaY?: number; modifiers?: string[] };
+function annotatePointer(tab: Tab, e: PagePointer): void {
+  const wc = tab.view.webContents;
+  if (wc.isDestroyed() || !['mouseMove', 'mouseDown', 'mouseUp', 'mouseWheel'].includes(e.type)) return;
+  const at = { x: Number(e.x) || 0, y: Number(e.y) || 0 };
+  const modifiers = (e.modifiers ?? []).filter(m => m === 'leftbuttondown' || m === 'middlebuttondown') as Electron.MouseInputEvent['modifiers'];
+  if (e.type === 'mouseWheel') wc.sendInputEvent({ type: 'mouseWheel', ...at, deltaX: Number(e.deltaX) || 0, deltaY: Number(e.deltaY) || 0 });
+  else wc.sendInputEvent({ type: e.type, ...at, button: e.button === 'middle' ? 'middle' : 'left', clickCount: Number(e.clickCount) || 1, modifiers });
 }
 
 async function captureMark(tab: Tab, r: Electron.Rectangle): Promise<Mark> {

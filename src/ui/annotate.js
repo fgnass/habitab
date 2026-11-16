@@ -17,6 +17,8 @@ const inPage = (x, y) => { const f = page(); return { x: clamp(x, f.x, f.x + f.w
 /** The kept notes ({ id, rect, text, dictated }), in their order; `current` is the one in the form (a new one, or a kept one opened again). */
 let notes = [], current = null, nextId = 1;
 let channel = false;
+/** Over an earlier screenshot (timeline) there is no page to use (⌥ does nothing). */
+let still = false;
 
 let open = false;
 api.onState(state => {
@@ -24,6 +26,7 @@ api.onState(state => {
   // (also without window focus, e.g. while the user is in another app).
   if (open && !state.annotating) reset();
   open = !!state.annotating;
+  still = !!state.timelinePreview;
   const s = state.sessions.find(x => x.id === state.selected);
   channel = !!(s?.push && s.phase !== 'ended' && s.phase !== 'kept');
   // Only say where it goes when it does not go straight to the agent.
@@ -114,8 +117,52 @@ function settle() {
   else drop();
 }
 
+// MARK: Use the page while marking
+
+// Hold ⌥ (Alt) and the mouse goes through to the page: it hovers, clicks and
+// scrolls there (e.g. to open a menu that shows only on hover). Let go and
+// the page gets nothing more: it stays as it is, and the area can be marked.
+// A key typed with ⌥ held (⌥L is @ on a German Mac) ends it until ⌥ is up.
+let alt = false, altTyped = false, through = null;
+const passing = e => !!e?.altKey && !altTyped && !still;
+function setAlt(down) {
+  alt = down;
+  if (!down) { altTyped = false; releaseThrough(); }
+  document.body.classList.toggle('through', alt && !altTyped && !still);
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Alt') { if (!e.repeat) setAlt(true); e.preventDefault(); return; }
+  if (e.altKey && !altTyped) { altTyped = true; releaseThrough(); setAlt(true); }
+}, true);
+document.addEventListener('keyup', e => { if (e.key === 'Alt') { setAlt(false); e.preventDefault(); } }, true);
+window.addEventListener('blur', () => setAlt(false));
+
+/** A mouse event of the overlay to the page, at the page's position (no modifiers: the page must not see ⌥). */
+function toPage(type, e, extra = {}) {
+  const f = page();
+  const x = e.clientX - f.x, y = e.clientY - f.y;
+  if (type === 'mouseMove' && (x < 0 || y < 0 || x > f.width || y > f.height) && !through) return;
+  api.action('annotatePointer', { type, x: Math.round(x), y: Math.round(y), ...extra });
+}
+/** A button still down in the page goes up when ⌥ goes (no stuck drag there). */
+function releaseThrough() {
+  if (!through) return;
+  api.action('annotatePointer', { type: 'mouseUp', x: through.x, y: through.y, button: through.button, clickCount: 1 });
+  through = null;
+}
+const BUTTONS = ['left', 'middle', 'right'];
+
 document.addEventListener('pointerdown', e => {
   if (e.target.closest?.('#form')) return;
+  if (passing(e) && !start) {
+    e.preventDefault();
+    if (e.button > 1) return;
+    const f = page();
+    through = { x: Math.round(e.clientX - f.x), y: Math.round(e.clientY - f.y), button: BUTTONS[e.button] };
+    try { document.documentElement.setPointerCapture(e.pointerId); } catch {}
+    toPage('mouseDown', e, { button: through.button, clickCount: e.detail || 1 });
+    return;
+  }
   const num = e.target.closest?.('.note .num');
   if (num) { e.preventDefault(); edit(notes[+num.dataset.i]); return; }
   settle();
@@ -124,18 +171,34 @@ document.addEventListener('pointerdown', e => {
   try { document.documentElement.setPointerCapture(e.pointerId); } catch {}
 });
 document.addEventListener('pointermove', e => {
+  if (through) {
+    const f = page();
+    through.x = Math.round(e.clientX - f.x); through.y = Math.round(e.clientY - f.y);
+    toPage('mouseMove', e, { modifiers: [through.button + 'buttondown'] });
+    return;
+  }
+  if (!start && passing(e)) return toPage('mouseMove', e);
   if (!start) return;
   const { x, y } = inPage(e.clientX, e.clientY);
   rect = { x: Math.min(start.x, x), y: Math.min(start.y, y), width: Math.abs(x - start.x), height: Math.abs(y - start.y) };
   draw();
 });
-document.addEventListener('pointerup', () => {
+document.addEventListener('pointerup', e => {
+  if (through) { toPage('mouseUp', e, { button: through.button, clickCount: e.detail || 1 }); through = null; return; }
   if (!start) return;
   start = null;
   // A click without a drag marks the visible page.
   if (!rect || rect.width < 6 || rect.height < 6) rect = { ...page() };
   showForm(true);
 });
+
+document.addEventListener('wheel', e => {
+  if (!passing(e) || e.target.closest?.('#form')) return;
+  e.preventDefault();
+  toPage('mouseWheel', e, { deltaX: -e.deltaX, deltaY: -e.deltaY });
+}, { passive: false });
+// The page's own context menu would open over the marks: no right button through.
+document.addEventListener('contextmenu', e => { if (passing(e)) e.preventDefault(); });
 
 // Context menu "Send Element to Agent…": the element comes already marked.
 api.onAnnotateRect(r => { settle(); start = null; rect = { ...r, x: r.x + page().x, y: r.y + page().y }; showForm(true); });
