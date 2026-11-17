@@ -336,8 +336,8 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'stop': return s?.active?.view.webContents.stop();
     case 'devtools': return s && manager.toggleDevtools(s);
     case 'closeTab': {
-      const target = manager.sessions.get(args[0])?.tabs.find(t => t.id === args[1]);
-      return target?.view.webContents.close();
+      const x = manager.sessions.get(args[0]), target = x?.tabs.find(t => t.id === args[1]);
+      return x && target && manager.closeTab(x, target);
     }
     case 'hold': return s && manager.toggleHold(s);
     case 'fork': return s && manager.forkTab(s);
@@ -997,7 +997,7 @@ function sessionMenu(s: Session, x: number, y: number, tabId?: number): void {
     { type: 'separator' },
     { label: 'Copy Session ID', click: () => clipboard.writeText(s.meta.agentSessionId ?? s.id) },
     ...(tab?.problems.length ? [{ label: sendLabel(tab.problems.length), click: () => sendProblems(s, tab) }] : []),
-    ...(tab ? [{ label: 'Close Tab', click: () => tab.view.webContents.close() }] : []),
+    ...(tab ? [{ label: 'Close Tab', click: () => manager.closeTab(s, tab) }] : []),
     { label: 'Close All Tabs of Session', enabled: s.tabs.length > 0, click: () => { manager.closeBrowser(s); layout(); } },
     { label: 'Remove from List', enabled: s.ended, click: () => manager.remove(s) },
   ]).popup({ window: win, x, y });
@@ -1139,7 +1139,7 @@ function updateMenu(): void {
       { role: 'quit' as const, label: 'Quit Habitab' },
     ] }] : []),
     { label: 'File', submenu: [
-      { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: !!s?.active, click: () => s?.active?.view.webContents.close() },
+      { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: !!s?.active, click: () => s?.active && manager.closeTab(s, s.active) },
       { type: 'separator' },
       { label: 'Edit Address', accelerator: 'CmdOrCtrl+L', click: () => { topbar.webContents.focus(); topbar.webContents.send('focus-url'); } },
       { label: 'Search Sessions', accelerator: 'CmdOrCtrl+K', click: () => { sidebar.webContents.focus(); sidebar.webContents.send('focus-search'); } },

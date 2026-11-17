@@ -28,6 +28,7 @@ const env = bridgeEnv(tmp, {
   // heavy page of the GPU test is paused after the load per tab was checked.
   HABITAB_GPU_BUSY_MS: '150',
   HABITAB_HANG_STOP_MS: '6000',
+  HABITAB_CLOSE_TIMEOUT_MS: '500',
 });
 // Fake Claude Code inbox socket (cross-session messaging): feedback notes arrive here.
 const inboxPath = path.join(tmp, 'inbox.sock');
@@ -247,6 +248,19 @@ const afterCloseState = await state();
 const afterClose = afterCloseState.sessions.find(s => s.id === sa.id);
 check(afterClose && !afterClose.devtools && !afterClose.tabs.some(t => t.url.endsWith('/third')) && !afterCloseState.errors.length, 'DevTools closed with the tab, no error reported', afterCloseState.errors.join('; '));
 check((await a.tool('evaluate_script', { pageId: pa2, function: '() => 2' })).text.includes('2'), 'agent continues on the remaining tab');
+await a.tool('select_page', { pageId: pa2 });
+
+// A tab whose contents never finishes the close (stuck in Chromium) still leaves the session.
+await a.tool('new_page', { url: `${base}/third` });
+await control(`select ${sa.id}`);
+await control(`closestuck ${sa.id}`);
+await sleep(300);
+const stuckEarly = (await state()).sessions.find(s => s.id === sa.id).tabs.some(t => t.url.endsWith('/third'));
+await sleep(1500);
+const stuckState = await state();
+check(stuckEarly && !stuckState.sessions.find(s => s.id === sa.id).tabs.some(t => t.url.endsWith('/third')) && !stuckState.errors.length, 'a tab that does not close is removed after the close timeouts', JSON.stringify({ stuckEarly, errors: stuckState.errors }));
+check(!(await a.tool('list_pages')).text.includes('/third'), 'the removed tab is gone for the agent too');
+check((await a.tool('evaluate_script', { pageId: pa2, function: '() => 3' })).text.includes('3'), 'agent continues after a stuck tab was removed');
 await a.tool('select_page', { pageId: pa2 });
 
 // Human control: tool calls wait

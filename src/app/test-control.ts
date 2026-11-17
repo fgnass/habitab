@@ -51,7 +51,9 @@ export function attach(m: SessionManager, ui: { win: BaseWindow; select: (id: st
       }
       // Like Cmd+W: closes the active tab without activating another one first.
       else if (cmd === 'gpupause' && s?.active) m.pauseGpu(s, s.active);
-      else if (cmd === 'closetab' && s?.active) s.active.view.webContents.close();
+      else if (cmd === 'closetab' && s?.active) m.closeTab(s, s.active);
+      // Like closetab, but the contents never finishes the close (as a contents stuck in Chromium).
+      else if (cmd === 'closestuck' && s?.active) { const wc = s.active.view.webContents; wc.close = () => {}; m.closeTab(s, s.active); }
       else if (cmd === 'remove' && s) m.remove(s);
       // Runs a script in one of the app's own views (e.g. \`ui timeline <js>\`), in the selected session's DevTools, or in its page (`ui page <js>`, not through the CDP proxy).
       else if (cmd === 'ui') { const v = view(id); if (v) void v.webContents.executeJavaScript([arg, ...rest].join(' ')).then(r => out({ ui: id, result: r }), e => out({ ui: id, error: e.message })); }

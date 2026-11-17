@@ -71,6 +71,8 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const GPU_BUSY_MS = Number(process.env.HABITAB_GPU_BUSY_MS) || 250;
 /** A page that does not answer for this long (while its renderer is busy) gets stopped (see hangCheck). */
 const HANG_STOP_MS = Number(process.env.HABITAB_HANG_STOP_MS) || 30_000;
+/** A tab whose contents are not destroyed this long after close() is closed harder (see closeTab). */
+const CLOSE_TIMEOUT_MS = Number(process.env.HABITAB_CLOSE_TIMEOUT_MS) || 2000;
 
 /** The GPU load the UI shows: percent of the GPU in steps of 10 while the tab is busy, else 0. */
 export const gpuShown = (t: Tab) => t.gpuBusy ? Math.min(100, Math.max(10, Math.round((t.gpu ?? 0) / 100) * 10)) : 0;
@@ -111,6 +113,8 @@ export interface Tab {
   pinging?: boolean;
   /** The page's renderer is gone (crashed or stopped, see stopPage): the tab is empty until it loads again. */
   gone?: string;
+  /** The tab left the session (closed, or removed because its contents did not close, see closeTab). */
+  closed?: boolean;
   /** Small JPEG of the tab for the sidebar (data URL). */
   thumb?: string;
   thumbTimer?: NodeJS.Timeout;
@@ -607,7 +611,7 @@ export class SessionManager {
           const t = s.tabs.find(x => x.targetId === targetId);
           if (!t) return false;
           s.agentClosed = true;
-          t.view.webContents.close();
+          this.closeTab(s, t);
           return true;
         },
         tabSize: targetId => {
@@ -927,7 +931,36 @@ export class SessionManager {
     if (notify) this.onChange();
   }
 
+  /**
+   * Closes the tab. Chromium can fail to finish the close of a contents that
+   * is stuck in the browser process (the page unloads, but the contents is
+   * never destroyed): after CLOSE_TIMEOUT_MS its renderer is ended and the
+   * close tried again, and after another CLOSE_TIMEOUT_MS the contents is
+   * destroyed and the tab leaves the session.
+   */
+  closeTab(s: Session, tab: Tab): void {
+    const wc = tab.view.webContents;
+    if (tab.closed || wc.isDestroyed()) return;
+    const url = wc.getURL();
+    wc.close();
+    setTimeout(() => {
+      if (tab.closed || wc.isDestroyed()) return;
+      log(`close: ${url} did not close within ${CLOSE_TIMEOUT_MS} ms, ends its renderer`);
+      try { wc.forcefullyCrashRenderer(); } catch {}
+      try { wc.close(); } catch {}
+      setTimeout(() => {
+        if (tab.closed || wc.isDestroyed()) return;
+        log(`close: ${url} still did not close, destroys its contents`);
+        // destroy() is not in Electron's documented API: the tab leaves the session in any case.
+        try { (wc as unknown as { destroy(): void }).destroy(); } catch (e: any) { log(`close: destroy failed: ${e.message}`); }
+        this.tabGone(s, tab);
+      }, CLOSE_TIMEOUT_MS);
+    }, CLOSE_TIMEOUT_MS);
+  }
+
   private tabGone(s: Session, tab: Tab): void {
+    if (tab.closed) return;
+    tab.closed = true;
     s.tabs = s.tabs.filter(t => t !== tab);
     clearTimeout(tab.thumbTimer);
     // The tab's timeline goes with it.
@@ -947,7 +980,7 @@ export class SessionManager {
 
   closeBrowser(s: Session): void {
     this.closeDevtools(s);
-    for (const t of [...s.tabs]) t.view.webContents.close();
+    for (const t of [...s.tabs]) this.closeTab(s, t);
     // The views go away asynchronously; a new browser must not reuse them.
     s.active = undefined;
     s.agentTab = undefined;
@@ -1314,7 +1347,11 @@ export class SessionManager {
   private async captureSteps(s: Session, steps: Step[], settle: boolean): Promise<void> {
     for (const x of steps) x.shooting = true;
     let shot: Awaited<ReturnType<SessionManager['grab']>>;
-    try { shot = await this.grab(s, steps, settle); } catch (e: any) { log(`timeline ${s.id}: ${e.message}`); }
+    try { shot = await this.grab(s, steps, settle); } catch (e: any) {
+      // E.g. UnknownVizError: Chromium could not copy the view's frame (seen on tabs that later did not scroll or close).
+      const t = steps.map(x => s.tabs.find(tab => tab.id === x.tab)).find(Boolean);
+      log(`timeline ${s.id}: ${e.message}${t ? ` (tab ${t.id}, ${t.view.webContents.isDestroyed() ? 'destroyed' : t.view.webContents.getURL()})` : ''}`);
+    }
     s.shooting = false;
     if (s.shootAgain) this.shoot(s);
     s.storing = (s.storing ?? Promise.resolve())
