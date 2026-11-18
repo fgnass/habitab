@@ -7,7 +7,7 @@
 <meta name="description" content="Habitab collects the browsers of your coding agents in one window: you see what the agent does, you can take control, mark areas and send problems back.">
 <meta property="og:title" content="Habitab – one home for your agent browsers">
 <meta property="og:description" content="Habitab collects the browsers of your coding agents in one window: you see what the agent does, you can take control, mark areas and send problems back.">
-<meta property="og:image" content="https://habitab.gnass.buzz/img/start.png">
+<meta property="og:image" content="https://habitab.gnass.buzz/img/hero.png">
 <meta property="og:url" content="https://habitab.gnass.buzz/">
 <link rel="icon" type="image/png" href="img/favicon.png">
 <link rel="apple-touch-icon" href="img/favicon.png">
@@ -19,7 +19,24 @@ a{color:#2F6B3A}a:hover{color:#15231A}
 *{box-sizing:border-box}
 img{display:block}
 h1,h2,h3{text-wrap:balance}
-  @media (max-width: 520px){ pre{ font-size: 13px !important; padding: 20px 18px !important; white-space: pre-wrap !important; overflow-wrap: anywhere; } }
+code{font-family:'Courier Prime',monospace;font-size:15px}
+.wrap{max-width:1120px;width:100%;margin:0 auto;padding:72px 32px}
+.kicker{margin:0;font-family:'Courier Prime',monospace;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:#2F6B3A}
+h2{margin:0;font-family:'Fraunces',serif;font-weight:600;font-size:clamp(34px,4vw,52px);line-height:1.05;letter-spacing:-.02em}
+.text{display:flex;flex-direction:column;gap:16px}
+.row{display:flex;flex-wrap:wrap;align-items:flex-start}.row>.text{flex:1 1 420px}
+.text p{margin:0;color:#3C4A40}
+.points{margin:4px 0 0;padding:14px 0 0;list-style:none;display:flex;flex-direction:column;gap:10px;font-size:16px;border-top:1px solid var(--line)}
+.points li{display:flex;gap:12px}.points li::before{content:"—";color:#2F6B3A}
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+figure img{width:100%;height:auto;border:1px solid var(--line);border-radius:8px}
+figcaption{font-style:italic;font-size:16px;line-height:1.5;color:#3C4A40}
+.facts{margin:0;font-family:'Courier Prime',monospace;font-size:14px;color:#3C4A40}
+.copy{font:inherit;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#15231A;background:none;border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+.copy:hover{background:#EDF0E4}
+.narrow-only{display:none}
+@media (max-width: 600px){ .wide-only{display:none} .narrow-only{display:inline} }
+@media (max-width: 520px){ pre{ font-size: 13px !important; padding: 20px 18px !important; white-space: pre-wrap !important; overflow-wrap: anywhere; } .wrap{padding-top:56px;padding-bottom:56px} }
 </style>
 </head>
 <body>
@@ -29,12 +46,11 @@ h1,h2,h3{text-wrap:balance}
   <header style="border-bottom: 1px solid var(--line)">
     <nav aria-label="Main" style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 16px 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px">
       <a href="#top" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #15231A; font-family: 'Fraunces', serif; font-weight: 600; font-size: 22px; letter-spacing: -0.01em">
-        <img src="img/icon.png" alt="" style="width: 30px; height: 30px">
+        <img src="img/icon-64.png" alt="" width="30" height="30">
         <span>Habitab</span>
       </a>
       <div style="margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px 24px; font-family: 'Courier Prime', monospace; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase">
-        <a href="#lost" style="color: #15231A; text-decoration: none; padding: 8px 0">Problems</a>
-        <a href="#more" style="color: #15231A; text-decoration: none; padding: 8px 0">Tools</a>
+        <a href="#lost" style="color: #15231A; text-decoration: none; padding: 8px 0">Features</a>
         <a href="#how" style="color: #15231A; text-decoration: none; padding: 8px 0">How it works</a>
         <a href="#install" style="color: #15231A; text-decoration: none; padding: 8px 0">Install</a>
         <a href="https://github.com/fgnass/habitab" style="color: #2F6B3A; text-decoration: none; padding: 8px 0">Source ↗</a>
@@ -46,153 +62,150 @@ h1,h2,h3{text-wrap:balance}
   <section id="top" style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 80px 32px 40px; display: flex; flex-direction: column; gap: 40px">
     <div style="display: flex; flex-direction: column; gap: 22px; max-width: 780px">
       <h1 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 300; font-style: italic; font-size: clamp(52px, 7.2vw, 108px); line-height: 0.96; letter-spacing: -0.03em; font-variation-settings: 'opsz' 144">One home for your agent browsers.</h1>
-      <p style="margin: 0; font-size: clamp(19px, 1.7vw, 23px); line-height: 1.45; color: #3C4A40; max-width: 660px">Every coding agent session starts its own Chrome. Windows pile up, tabs go orphaned, and you spend the afternoon hunting for the one the agent is actually using. Habitab puts all of them in one window, keeps them apart, and lets you watch, point and step in without getting in the agent's way.</p>
+      <p style="margin: 0; font-size: clamp(19px, 1.7vw, 23px); line-height: 1.45; color: #3C4A40; max-width: 660px">Do you use Claude Code or Codex with the Chrome DevTools MCP server? Habitab puts their browsers in one window. You see what each agent does, you point at what you mean, and you step in without breaking its run.</p>
       <div style="display: flex; flex-wrap: wrap; gap: 14px; margin-top: 4px">
         <a href="#install" style="display: inline-flex; align-items: center; min-height: 48px; padding: 12px 22px; background: #15231A; color: #EDF0E4; text-decoration: none; font-family: 'Courier Prime', monospace; font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase">Install →</a>
         <a href="#lost" style="display: inline-flex; align-items: center; min-height: 48px; padding: 12px 22px; border: 1px solid var(--line); color: #15231A; text-decoration: none; font-family: 'Courier Prime', monospace; font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase">What it fixes</a>
       </div>
+      <p class="facts">For Claude Code and Codex · Chrome DevTools MCP · macOS and Linux · Node 20+</p>
     </div>
-    <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
-      <img src="img/start.png" alt="The Habitab window on its start page: the app icon, the name Habitab, the line '2 sessions · 5 tabs · 3 problems. Pick a tab on the left.' and a list of keyboard shortcuts; on the left a sidebar with two sessions grouped by project and live tab thumbnails of a juice shop and an API docs site" style="width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 24px 60px rgba(21,35,26,0.18)">
-      <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Two sessions on the left: Claude Code with four tabs, Codex with one. One Dock icon for all of them.</figcaption>
+    <figure>
+      <picture>
+        <source media="(max-width: 600px)" srcset="img/hero-mobile.png" width="470" height="615">
+        <img src="img/hero.png" width="1440" height="870" fetchpriority="high" alt="The Habitab window: on the left two agent sessions grouped by project, with live tab thumbnails; on the right the checkout page of a juice shop, where the line 'Deposit (3 bottles)' is marked and a note to the agent is open with the text 'Show the deposit next to each bottle, not only here. People think it is a fee.', a Hold to talk button and the buttons Cancel, Add and Send" style="box-shadow: 0 24px 60px rgba(21,35,26,0.18)">
+      </picture>
+      <figcaption><span class="wide-only">Two agent sessions on the left. On the right, you marked a line of the checkout and write a note to the agent.</span><span class="narrow-only">You marked a line of the checkout and write a note to the agent.</span></figcaption>
     </figure>
   </section>
 
-  <!-- PROBLEM 1: LOST WINDOWS -->
+  <!-- ALL SESSIONS TOGETHER -->
   <section id="lost" style="border-top: 1px solid var(--line)">
-    <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px; display: flex; flex-wrap: wrap; gap: 56px; align-items: flex-start">
-      <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 16px">
-        <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">“Where did the browser go?”</h2>
-        <p style="margin: 0; color: #3C4A40">Each session of Claude Code or Codex launches its own Chrome through the DevTools MCP server. Three sessions, three Chromes, each with its own Dock icon and a window somewhere behind everything else. When a session ends, its tabs stay open. After a week you have a desktop full of orphaned windows and no idea which one is live.</p>
-        <p style="margin: 0; color: #3C4A40"><strong>Habitab is one window.</strong> Sessions are grouped by project on the left, one row per tab with a live thumbnail. Click a row and you see that session's real Chromium on the right. Chromium runs inside the app, so there is exactly one Dock icon and nothing that can become orphaned. When a session ends, its tabs close and its data is gone.</p>
-        <ul style="margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; font-size: 16px; border-top: 1px solid var(--line); padding-top: 14px">
-          <li style="display: flex; gap: 12px"><span style="color: #2F6B3A">—</span><span>Every session has its own cookies, storage and cache. An agent only sees the tabs of its own session; its popups land there too.</span></li>
-          <li style="display: flex; gap: 12px"><span style="color: #2F6B3A">—</span><span>Tabs the agent has not touched for a while fold away. Pin a session and its browser stays after the agent is gone.</span></li>
-          <li style="display: flex; gap: 12px"><span style="color: #2F6B3A">—</span><span>Restart the app and connected sessions come back with their tabs; the agents do not notice.</span></li>
+    <div class="wrap row" style="gap: 56px">
+      <div class="text">
+        <p class="kicker">All sessions together</p>
+        <h2>“Where did the browser go?”</h2>
+        <p>Each agent session starts its own Chrome. After a few days you have many windows, and you do not know which one is live.</p>
+        <p><strong>Habitab is one window.</strong> Sessions are grouped by project, with a live thumbnail for each tab. When a session ends, its tabs close.</p>
+        <ul class="points">
+          <li>Each session has its own cookies, storage and cache.</li>
+          <li>Pin a session to keep its browser after the agent stops.</li>
+          <li>Restart the app, and the sessions come back with their tabs.</li>
         </ul>
       </div>
-      <figure style="flex: 0 1 360px; margin: 0; display: flex; flex-direction: column; gap: 10px">
-        <img src="img/sidebar.png" alt="The sidebar: sessions grouped by project, each tab with a live thumbnail" style="width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px">
-        <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Projects, sessions, tabs. The thumbnails are live.</figcaption>
+      <figure style="flex: 0 1 360px">
+        <img src="img/sidebar.png" width="280" height="500" loading="lazy" decoding="async" alt="The sidebar: sessions grouped by project, each tab with a live thumbnail">
+        <figcaption>Projects, sessions, tabs. The thumbnails are live.</figcaption>
       </figure>
     </div>
   </section>
 
-  <!-- PROBLEM 2: INTERFERENCE -->
+  <!-- STEP IN SAFELY -->
   <section id="interfere" style="border-top: 1px solid var(--line); background: #F6F7F0">
-    <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px; display: flex; flex-direction: column; gap: 28px">
-      <div style="display: flex; flex-wrap: wrap; gap: 24px 56px; align-items: flex-start">
-        <div style="flex: 1 1 360px; display: flex; flex-direction: column; gap: 16px">
-          <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">“Sorry, I just wanted to quickly check something.”</h2>
-        </div>
-        <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 14px">
-          <p style="margin: 0; color: #3C4A40">The agent is in the middle of a test run. You click into the page to look at a menu, scroll a bit, type into a field. The agent does not know. Its next screenshot shows a page it did not expect, its selectors miss, and it starts to debug a problem that you caused. You, meanwhile, get a page pulled out from under your cursor.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>In Habitab, your click holds the agent.</strong> The moment you interact with a page, the agent's next tool calls wait. Poke around as long as you like. It goes on after ten seconds without input, when you switch to another app, or when you press Resume. Cmd-Tab is not input, and neither is the agent's own typing.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>Need more than a quick look?</strong> Press Own Tab. The page opens again in a tab only for you, with the same cookies and storage, and the agent goes on in its tab at once. What you do in yours does not hold it.</p>
-          <p style="margin: 0; color: #3C4A40">The other direction holds too: the window never raises itself. An agent that calls <code style="font-family: 'Courier Prime', monospace; font-size: 15px">bringToFront</code> switches the tab; it does not steal your focus.</p>
-        </div>
+    <div class="wrap" style="display: flex; flex-direction: column; gap: 28px">
+      <div class="text" style="max-width: 760px">
+        <p class="kicker">Step in safely</p>
+        <h2>“Sorry, I just wanted to check something.”</h2>
+        <p>You click into the page while the agent tests it. Its next screenshot shows a page it did not expect, and it starts to debug a problem that you caused.</p>
+        <p><strong>Your click holds the agent.</strong> Its next actions in that tab wait until you stop. The agent gets a note that you have control, so it does not look for a bug.</p>
+        <ul class="points">
+          <li>In its other tabs, the agent goes on.</li>
+          <li>Need more time? Own Tab opens the page again, only for you.</li>
+          <li>The window never takes your focus.</li>
+        </ul>
       </div>
-      <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
-        <img src="img/control.png" alt="The top bar while you have control: a hand icon with 'You have control · 8 s', next to it the Own Tab button, and the status line 'You have control: the agent's next tool calls wait'" style="width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px">
-        <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">You have control. The agent waits until you give it back, or until you press Own Tab.</figcaption>
+      <figure>
+        <img src="img/control.png" width="1159" height="75" loading="lazy" decoding="async" alt="The top bar while you have control: the red error count, a hand icon with 'You have control' and the seconds left, next to it the Own Tab button, and the status line 'You have control: the agent's next tool calls wait'">
+        <figcaption>You have control. The agent goes on after ten seconds without input, or when you press Resume.</figcaption>
       </figure>
     </div>
   </section>
 
-  <!-- PROBLEM 3: FEEDBACK -->
+  <!-- POINT AND SEND -->
   <section id="feedback" style="border-top: 1px solid var(--line)">
-    <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px; display: flex; flex-direction: column; gap: 40px">
-      <div style="display: flex; flex-wrap: wrap; gap: 24px 56px; align-items: flex-start">
-        <div style="flex: 1 1 360px; display: flex; flex-direction: column; gap: 16px">
-          <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">“No, the other button. The one on the left. Below the thing.”</h2>
-        </div>
-        <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 14px">
-          <p style="margin: 0; color: #3C4A40">Describing a piece of a page in a chat window is slow and lossy. So is copying an error out of the console. And you only find out there <em>is</em> an error after you open the console, scroll, and decide whether that red line is the expected one or a new one.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>Habitab lets you point.</strong> Mark an area of the page, write a note. The agent gets your words, the URL, the elements inside the area and that part of the screen as an image. The page's context menu has “Send Element to Agent…” for the element under the pointer.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>And it shows problems before you ask.</strong> Console errors, uncaught exceptions and failed requests are counted per tab: a red count in the tab's row and in the top bar, cleared when the page loads a new document. Click the count and the tab's console opens on them. Right-click the count, or a message in the console, and send them to the agent, the same way as a marked area.</p>
-        </div>
+    <div class="wrap row" style="gap: 56px">
+      <div class="text">
+        <p class="kicker">Point and send</p>
+        <h2>“No, the other button.”</h2>
+        <p>Describing a part of a page in a chat is slow. So is copying errors out of the console.</p>
+        <p><strong>Mark it and write a note.</strong> The agent gets your words, the URL, the elements in the area and an image of it. Console errors and failed requests show as a red count; a right-click sends them to the agent.</p>
+        <ul class="points">
+          <li>Hold ⌥ (Alt) to mark a hover state or an open menu.</li>
+          <li>On a Mac, dictate the note. Recognition runs on the Mac.</li>
+          <li>Claude Code and Codex get the note in the running session.</li>
+        </ul>
       </div>
-      <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start">
-        <figure style="flex: 1 1 440px; margin: 0; display: flex; flex-direction: column; gap: 10px">
-          <img src="img/annotate.png" alt="The order box of the checkout page with the line 'Deposit (3 bottles)' marked, and below it the note 'Show the deposit next to each bottle, not only here. People think it is a fee.' with the buttons Cancel and Send and the line 'Goes to the waiting agent'" style="width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px">
-          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">The agent asked which part of the order box you mean. Mark it, write a note, send.</figcaption>
-        </figure>
-        <figure style="flex: 1 1 440px; margin: 0; display: flex; flex-direction: column; gap: 10px">
-          <img src="img/problems.png" alt="The top bar with a red count of 3, its context menu with 'Send 3 Console Errors to Agent', 'Open Console' and 'Clear', and below it the docked console with the three errors" style="width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px">
-          <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">Three errors on the checkout page. Right-click the count and they go to the agent, no copy and paste.</figcaption>
-        </figure>
-      </div>
-      <p style="margin: 0; color: #3C4A40; font-size: 16px; max-width: 760px">Without a waiting agent, a note goes to the session's inbox: an idle Claude Code session starts a new turn with it, a busy one reads it between tool calls. Codex gets it through its queue. The agent then asks Habitab for the details with <code style="font-family: 'Courier Prime', monospace; font-size: 14px">wait_for_user_feedback</code>, a tool the launcher adds.</p>
+      <figure style="flex: 1 1 400px">
+        <img src="img/problems.png" width="1037" height="448" loading="lazy" decoding="async" alt="The top bar with a red count of 3 and below it the count's context menu with 'Send 3 Console Errors to Agent', 'Open Console' and 'Clear'">
+        <figcaption>Three errors on the checkout page. A right-click on the count sends them.</figcaption>
+      </figure>
     </div>
   </section>
 
-  <!-- PROBLEM 4: TOO FAST -->
+  <!-- REPLAY EVERY CHANGE -->
   <section id="fast" style="border-top: 1px solid var(--line); background: #F6F7F0">
-    <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px; display: flex; flex-direction: column; gap: 28px">
-      <div style="display: flex; flex-wrap: wrap; gap: 24px 56px; align-items: flex-start">
-        <div style="flex: 1 1 360px; display: flex; flex-direction: column; gap: 16px">
-          <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">“Wait, what did you just do?”</h2>
-        </div>
-        <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 14px">
-          <p style="margin: 0; color: #3C4A40">Agents click faster than you can read. A form fills itself, a dialog flashes by, the page you wanted to comment on is already gone. The chat says “clicked the submit button” and you have to take its word for it.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>Habitab keeps a timeline.</strong> A screenshot follows every tool call, and another one 400 ms later for pages that were still painting. One card per visible change; calls that changed nothing join the card before. Scroll back, click a card to see it large, with its calls in the status line. Mark an area on an earlier screenshot and the agent is told which call and URL it belongs to.</p>
-        </div>
+    <div class="wrap" style="display: flex; flex-direction: column; gap: 28px">
+      <div class="text" style="max-width: 760px">
+        <p class="kicker">Replay every change</p>
+        <h2>“Wait, what did you just do?”</h2>
+        <p>Agents click faster than you can read. The page you wanted to comment on is already gone.</p>
+        <p><strong>Habitab keeps a timeline.</strong> A screenshot follows each tool call, with one card for each visible change. Mark an area on an earlier card, and the agent learns which step it belongs to.</p>
       </div>
-      <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
-        <img src="img/timeline.png" alt="The timeline strip under the status line: five thumbnails of the page as it changed, the last one selected" style="width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px">
-        <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">The timeline: five changes, from the shop's front page to the checkout. It keeps 300 steps per session.</figcaption>
+      <figure>
+        <img src="img/timeline.png" width="1159" height="86" loading="lazy" decoding="async" alt="The timeline strip under the status line: five thumbnails of the page as it changed, and a card for the live page">
+        <figcaption>Five changes, from the shop's front page to the checkout.</figcaption>
       </figure>
     </div>
   </section>
 
-  <!-- THE REST -->
+  <!-- A REAL BROWSER -->
   <section id="more" style="border-top: 1px solid var(--line)">
-    <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px; display: flex; flex-direction: column; gap: 28px">
-      <div style="display: flex; flex-wrap: wrap; gap: 24px 56px; align-items: flex-start">
-        <div style="flex: 1 1 360px; display: flex; flex-direction: column; gap: 16px">
-          <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">“Is this even a real browser?”</h2>
-        </div>
-        <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 14px">
-          <p style="margin: 0; color: #3C4A40">Habitab is an Electron app, and that can sound like a toy. It is not: every tab is Chromium, the engine of Chrome, and the parts of Chrome you use every day are there.</p>
-          <p style="margin: 0; color: #3C4A40"><strong>The real DevTools</strong>, docked and resizable, open while the agent works. <strong>Responsive mode</strong> with a phone preset, the common breakpoints, an exact size and drag handles; the agent's <code style="font-family: 'Courier Prime', monospace; font-size: 15px">emulate</code> and <code style="font-family: 'Courier Prime', monospace; font-size: 15px">resize_page</code> use the same frame. Address bar, back, reload, find in page. Prompts for camera, microphone and location. An optional persistent profile per project, so logins survive restarts.</p>
-        </div>
+    <div class="wrap" style="display: flex; flex-direction: column; gap: 28px">
+      <div class="text" style="max-width: 760px">
+        <p class="kicker">A real browser</p>
+        <h2>Chromium, with the tools you know.</h2>
+        <p>Every tab is Chromium. <strong>The DevTools</strong> dock beside the page while the agent works. <strong>Responsive mode</strong> shares its frame with the agent's <code>emulate</code> and <code>resize_page</code>.</p>
+        <ul class="points">
+          <li>A persistent profile per project keeps your logins.</li>
+          <li>Pages that load the GPU, or stop responding, show in the top bar.</li>
+          <li>Address bar, find in page, downloads, camera and microphone prompts.</li>
+        </ul>
       </div>
-      <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
-        <img src="img/browser.png" alt="The Habitab window: the checkout page in responsive mode at 390 by 728 pixels with the phone preset selected, and DevTools docked on the right with the Elements panel and Styles" style="width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px">
-        <figcaption style="font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">The checkout at phone width, DevTools beside it. If a page needs full WebAssembly speed, pause the agent's debugger per project.</figcaption>
+      <figure>
+        <img src="img/browser.png" width="1440" height="870" loading="lazy" decoding="async" alt="The Habitab window: the checkout page in responsive mode at 390 by 728 pixels with the phone preset selected, and DevTools docked on the right with the Elements panel and Styles">
+        <figcaption>The checkout at phone width, DevTools beside it.</figcaption>
       </figure>
+      <p style="margin: 0; font-size: 16px; color: #3C4A40">All details, shortcuts and limits are in the <a href="https://github.com/fgnass/habitab#readme">README ↗</a></p>
     </div>
   </section>
 
   <!-- HOW IT WORKS -->
   <section id="how" style="border-top: 1px solid var(--line); background: #F6F7F0">
-    <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px; display: flex; flex-wrap: wrap; gap: 56px; align-items: flex-start">
-      <div style="flex: 1 1 400px; display: flex; flex-direction: column; gap: 16px">
-        <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">A launcher in front of the MCP server. Nothing else changes.</h2>
-        <p style="margin: 0; color: #3C4A40">Your agent talks to the official <a href="https://github.com/ChromeDevTools/chrome-devtools-mcp">Chrome DevTools MCP server</a>, unchanged. The launcher starts it as a child process, replaces the launch options with a <code style="font-family: 'Courier Prime', monospace; font-size: 15px">--browserUrl</code> that points at Habitab, and observes the MCP stream to learn which client, project and session it belongs to. The first browser access starts the app in the background.</p>
-        <p style="margin: 0; color: #3C4A40; font-size: 16px">Everything binds to 127.0.0.1; the socket belongs to your user alone. Runs on macOS and Linux; Windows is prepared in the architecture, not tested.</p>
+    <div class="wrap row" style="gap: 56px">
+      <div class="text" style="flex: 1 1 400px">
+        <p class="kicker">How it works</p>
+        <h2>A different browser for the MCP server. The server stays as it is.</h2>
+        <p>Your agent keeps the official <a href="https://github.com/ChromeDevTools/chrome-devtools-mcp">Chrome DevTools MCP server</a>, with no wrapper and no new options. Habitab changes one setting: the browser that the server starts. That browser opens in Habitab, in the session of its agent. If Habitab is not running, the agent gets the normal Chrome.</p>
       </div>
       <div style="flex: 1 1 380px; display: flex; flex-direction: column; font-family: 'Courier Prime', monospace; font-size: 14px">
-        <div style="border: 1.2px solid var(--line); background: #EDF0E4; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px">
-          <span style="font-family: 'Fraunces', serif; font-weight: 600; font-size: 20px">Claude Code · Codex · …</span>
+        <div style="border: 1.2px solid var(--line); background: #EDF0E4; border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px">
+          <span style="font-family: 'Fraunces', serif; font-weight: 600; font-size: 20px">Claude Code · Codex</span>
           <span style="color: #3C4A40">your agent, as installed</span>
         </div>
         <div style="padding: 8px 0 8px 18px; color: #2F6B3A; display: flex; align-items: center; gap: 12px">
           <svg aria-hidden="true" width="14" height="30" viewBox="0 0 14 30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1v24"></path><path d="m2 20 5 6 5-6"></path></svg>
-          <span>stdio · MCP</span>
+          <span>MCP</span>
         </div>
-        <div style="border: 1.2px solid #2F6B3A; background: #EDF0E4; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px">
-          <span style="font-family: 'Fraunces', serif; font-weight: 600; font-size: 20px">habitab mcp</span>
-          <code style="color: #2F6B3A; word-break: break-all">habitab mcp -- npx -y chrome-devtools-mcp@latest --isolated</code>
-          <span style="color: #3C4A40">the launcher: starts the original command, swaps the launch options for --browserUrl, adds wait_for_user_feedback</span>
+        <div style="border: 1.2px solid var(--line); background: #EDF0E4; border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px">
+          <span style="font-family: 'Fraunces', serif; font-weight: 600; font-size: 20px">Chrome DevTools MCP</span>
+          <span style="color: #3C4A40">unchanged</span>
         </div>
         <div style="padding: 8px 0 8px 18px; color: #2F6B3A; display: flex; align-items: center; gap: 12px">
           <svg aria-hidden="true" width="14" height="30" viewBox="0 0 14 30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1v24"></path><path d="m2 20 5 6 5-6"></path></svg>
-          <span>unix socket (0600) · one CDP proxy per session</span>
+          <span>opens Habitab instead of Chrome</span>
         </div>
-        <div style="border: 1.2px solid var(--line); background: #15231A; color: #EDF0E4; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px">
-          <span style="display: flex; align-items: center; gap: 10px; font-family: 'Fraunces', serif; font-weight: 600; font-size: 20px"><img src="img/icon.png" alt="" style="width: 22px; height: 22px"><span>Habitab.app</span></span>
-          <span style="color: #C9D0BC">partition per session · embedded Chromium views · docked DevTools · timeline · feedback tool</span>
+        <div style="border: 1.2px solid var(--line); background: #15231A; color: #EDF0E4; border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 4px">
+          <span style="display: flex; align-items: center; gap: 10px; font-family: 'Fraunces', serif; font-weight: 600; font-size: 20px"><img src="img/icon-64.png" alt="" width="22" height="22" loading="lazy"><span>Habitab</span></span>
+          <span style="color: #C9D0BC">one window for all sessions</span>
         </div>
       </div>
     </div>
@@ -200,32 +213,47 @@ h1,h2,h3{text-wrap:balance}
 
   <!-- INSTALL -->
   <section id="install" style="border-top: 1px solid var(--line)">
-    <div style="max-width: 1120px; width: 100%; margin: 0 auto; padding: 72px 32px 88px; display: flex; flex-wrap: wrap; gap: 48px">
-      <div style="flex: 1 1 360px; display: flex; flex-direction: column; gap: 16px">
-        <h2 style="margin: 0; font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 1.05; letter-spacing: -0.02em">Three steps. Safe to run again.</h2>
-        <p style="margin: 0; color: #3C4A40">Needs macOS or Linux, Node ≥ 20 and npm. The installer builds the app, puts it in /Applications (Linux: ~/.local/lib/habitab) and starts it. The app then offers the setup: it shows every change to your MCP configurations before applying it, and only <code style="font-family: 'Courier Prime', monospace; font-size: 15px">command</code> and <code style="font-family: 'Courier Prime', monospace; font-size: 15px">args</code> change; comments and formatting stay. Running sessions need a restart.</p>
-        <p style="margin: 0; color: #3C4A40; font-size: 16px">Built for Claude Code and Codex: session mapping, the feedback inbox, the lot. OpenCode and Gemini CLI get the shared browser. <code style="font-family: 'Courier Prime', monospace; font-size: 15px">--uninstall</code> restores every configuration byte for byte.</p>
+    <div class="wrap row" style="padding-bottom: 88px; gap: 48px">
+      <div class="text" style="flex: 1 1 360px">
+        <p class="kicker">Install</p>
+        <h2>Three commands. Safe to run again.</h2>
+        <ol style="margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px; color: #3C4A40">
+          <li><strong style="color: #15231A">Needs:</strong> macOS or Linux, Node 20 or newer and npm; Claude Code or Codex with the Chrome DevTools MCP server.</li>
+          <li><strong style="color: #15231A">Run</strong> the commands. The installer builds the app, puts it in /Applications (Linux: ~/.local/lib/habitab) and starts it. The app sets one entry in chrome-devtools-mcp's global config; it changes no client configuration.</li>
+          <li><strong style="color: #15231A">Then</strong> restart any running agent sessions. Habitab → Setup… shows which ones.</li>
+        </ol>
+        <p><strong style="color: #15231A">It works when</strong> the agent's next browser call opens in Habitab, and its session shows on the left under its project.</p>
+        <p style="font-size: 16px">Other agents with chrome-devtools-mcp 1.10 or newer, such as OpenCode or Cursor, get the shared browser; their notes go to the clipboard. <code>./install.sh --uninstall</code> removes the entry and the app.</p>
       </div>
-      <div class="term" style="flex: 1 1 440px; min-width: 0; align-self: flex-start; border: 1.2px solid var(--line); border-radius: 12px; background: #F6F7F0; overflow: hidden">
-        <div aria-hidden="true" style="display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1.2px solid var(--line)">
-          <span style="width: 11px; height: 11px; border: 1.2px solid var(--line); border-radius: 50%"></span><span style="width: 11px; height: 11px; border: 1.2px solid var(--line); border-radius: 50%"></span><span style="width: 11px; height: 11px; border: 1.2px solid var(--line); border-radius: 50%"></span>
-          <span style="flex: 1; margin-right: 53px; text-align: center; font-family: 'Courier Prime', monospace; font-size: 13px; color: #3C4A40">~/Projects</span>
+      <div style="flex: 1 1 440px; min-width: 0; align-self: flex-start; border: 1.2px solid var(--line); border-radius: 8px; background: #F6F7F0; overflow: hidden">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; border-bottom: 1.2px solid var(--line)">
+          <span aria-hidden="true" style="width: 11px; height: 11px; border: 1.2px solid var(--line); border-radius: 50%"></span><span aria-hidden="true" style="width: 11px; height: 11px; border: 1.2px solid var(--line); border-radius: 50%"></span><span aria-hidden="true" style="width: 11px; height: 11px; border: 1.2px solid var(--line); border-radius: 50%"></span>
+          <span aria-hidden="true" style="flex: 1; text-align: center; font-family: 'Courier Prime', monospace; font-size: 13px; color: #3C4A40">~/Projects</span>
+          <button type="button" class="copy" id="copy" style="font-family: 'Courier Prime', monospace">Copy</button>
         </div>
-      <pre style="margin: 0; padding: 22px 28px 26px; font-family: 'Courier Prime', monospace; font-size: 15px; line-height: 1.7; overflow-x: auto; white-space: pre; color: #15231A"><span style="color: #3C4A40">$</span> git clone https://github.com/fgnass/habitab
-<span style="color: #3C4A40">$</span> cd habitab
-<span style="color: #3C4A40">$</span> ./install.sh
-
-<span style="color: #3C4A40"># then in the app: Habitab → Setup…</span></pre>
+      <pre style="margin: 0; padding: 22px 28px 26px; font-family: 'Courier Prime', monospace; font-size: 15px; line-height: 1.7; overflow-x: auto; white-space: pre; color: #15231A"><span style="color: #3C4A40">$</span> <span class="cmd">git clone https://github.com/fgnass/habitab</span>
+<span style="color: #3C4A40">$</span> <span class="cmd">cd habitab</span>
+<span style="color: #3C4A40">$</span> <span class="cmd">./install.sh</span></pre>
       </div>
     </div>
   </section>
 
   <!-- FOOTER -->
   <footer style="border-top: 1px solid var(--line); padding: 20px 32px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; font-family: 'Spectral', serif; font-style: italic; font-size: 16px; line-height: 1.5; color: #3C4A40">
-    <span style="display: flex; align-items: center; gap: 8px"><img src="img/icon.png" alt="" style="width: 18px; height: 18px"><span>Habitab · built on chrome-devtools-mcp and Electron</span></span>
-    <span>A non-commercial hobby project by <a href="https://gnass.buzz/">Felix Gnass</a> · <a href="https://github.com/fgnass/habitab">Source</a> · <a href="https://gnass.buzz/privacy/">Privacy</a></span>
+    <span style="display: flex; align-items: center; gap: 8px"><img src="img/icon-64.png" alt="" width="18" height="18" loading="lazy"><span>Habitab · built on chrome-devtools-mcp and Electron</span></span>
+    <span>A non-commercial hobby project by <a href="https://gnass.buzz/">Felix Gnass</a> · <a href="https://github.com/fgnass/habitab">Source</a> · <a href="privacy.html">Privacy</a></span>
   </footer>
 
 </div>
+<script>
+// Copies the install commands, without the prompts.
+document.getElementById('copy').addEventListener('click', async e => {
+  const b = e.currentTarget;
+  const text = [...document.querySelectorAll('#install .cmd')].map(s => s.textContent).join('\n');
+  try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; }
+  catch { b.textContent = 'Select and copy'; }
+  setTimeout(() => { b.textContent = 'Copy'; }, 2000);
+});
+</script>
 </body>
 </html>

@@ -101,47 +101,57 @@ const MENU = `(() => {
 // Page coordinates of the deposit line in the order box, and the note about it.
 const DEPOSIT = { x: 818, y: 496 };
 const NOTE = 'Show the deposit next to each bottle, not only here. People think it is a fee.';
-const ANNOTATE_CROP = [1030, 940, 470, 1940];
+// The hero on phones: the order box with the note, readable at a small width.
+const HERO_MOBILE_CROP = [1230, 940, 470, 1940];
 
 control('deselect');
 await sleep(1500);
 control('deselect');
-await shot('start');
 control(`select ${shop.id} ${shop.tabs.at(-1).id}`);
 crop(await tmpShot('main'), 'sidebar', [1000, 560, 150, 0]);
 control(`action ${shop.id} timeline true`);
 crop(await tmpShot('timeline'), 'timeline', [172, 2318, 92, 562]);
 control(`action ${shop.id} timeline false`);
 await sleep(600);
-// The error count opens the tab's console: the count in the top bar and the docked console.
-control(`action ${shop.id} problems`);
-await sleep(1800);
+// Both shots below need the error count in the top bar: it hides while the
+// DevTools are open, and opening the console marks the errors as seen.
+// You have control: the count in the top bar, and the button for an own tab.
+// A click in the page (synthetic, the real pointer stays) gives the user control of this tab.
+control(`userclick ${shop.id}`);
+crop(await tmpShot('control'), 'control', [150, 2318, 0, 562]);
+control(`hold ${shop.id} off`);
+await sleep(600);
 // A native menu is a window of its own that `screencapture -l` does not see, and
 // opening one would take the user's pointer. So the shot shows a copy of the count's
-// context menu (same items) in the DevTools view, at the count.
-control(`ui devtools ${MENU}`);
-crop(await tmpShot('problems'), 'problems', [576, 1037, 0, 1843]);
-control('ui devtools document.getElementById("hb-menu")?.remove()');
+// context menu (same items), drawn into the page right below the count.
+const content = await ask('bounds', 'bounds');
+const topbar = await ask('bounds topbar', 'bounds');
+const pageView = await ask('bounds page', 'bounds');
+const count = await ask('ui topbar (() => { const r = document.getElementById("problems").getBoundingClientRect(); return { x: r.x, w: r.width }; })()', 'result');
+const menuX = Math.round(topbar.x + count.x - pageView.x);
+control(`ui page ${MENU.replace('(innerWidth - 249)', String(menuX))}`);
+const PROBLEMS_W = 1037;
+crop(await tmpShot('problems'), 'problems', [(pageView.y + 150) * 2, PROBLEMS_W, 0, content.width * 2 - PROBLEMS_W]);
+control('ui page document.getElementById("hb-menu")?.remove()');
 // Still a browser: the phone preset of responsive mode, DevTools docked beside it.
-control(`devtools ${shop.id}`);
-await sleep(600);
 control(`devtools ${shop.id}`);
 control(`action ${shop.id} responsive`);
 await sleep(600);
 control(`action ${shop.id} emulate {"preset":"responsive","width":390,"fillHeight":true}`);
+await sleep(600);
+// Opening the DevTools and responsive mode counts as input; this shot is not about control.
+control(`hold ${shop.id} off`);
 await shot('browser', 2500);
 control(`devtools ${shop.id}`);
 control(`action ${shop.id} responsive`);
 await sleep(600);
-// You have control: the count in the top bar, and the button for an own tab.
-control(`interact ${shop.id}`);
-crop(await tmpShot('control'), 'control', [150, 2318, 0, 562]);
-control(`hold ${shop.id} off`);
 // Marking: the element comes marked (like "Send Element to Agent…"), a note is written.
 control(`sendelement ${shop.id} ${DEPOSIT.x} ${DEPOSIT.y}`);
 await sleep(800);
 control(`ui annotator document.getElementById("text").value = ${JSON.stringify(NOTE)}`);
-crop(await tmpShot('annotate'), 'annotate', ANNOTATE_CROP);
+// The whole window while marking is the hero: sessions on the left, the note on the page.
+const hero = await shot('hero');
+crop(hero, 'hero-mobile', HERO_MOBILE_CROP);
 
 // KEEP_RAW=1 keeps the uncropped shots (to find new crop rectangles).
 if (!process.env.KEEP_RAW) for (const f of fs.readdirSync(outDir)) if (f.startsWith('raw-')) fs.rmSync(path.join(outDir, f));
