@@ -329,6 +329,70 @@ contextBridge.executeInMainWorld({ func: installGpuProbe, args: [
   (cb: (level: number) => void) => { ipcRenderer.on('habitab:hold-frames', (_e, level: number | boolean) => cb(Number(level) || 0)); },
 ] });
 
+/**
+ * Marking mode (annotate.js): each mark of the user follows an element of the
+ * page, so it moves when the page scrolls, and stays where a fixed or sticky
+ * element stays. Runs in this preload's world: the page does not see it, and
+ * a held page (installGpuProbe) does not stop it.
+ * The anchor is the innermost element at the mark's center that contains the
+ * whole mark (else the element at its center). Without one, the mark scrolls
+ * with the document.
+ */
+type Anchor = { el: Element | null; x: number; y: number; width: number; height: number };
+const anchors = new Map<number, Anchor>();
+let sent = '', loop = 0;
+
+function anchorFor(r: { x: number; y: number; width: number; height: number }): Anchor {
+  const root = (el: Element | null) => !el || el === document.body || el === document.documentElement;
+  const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+  const contains = (b: DOMRect) => b.left <= r.x + 2 && b.top <= r.y + 2 && b.right >= r.x + r.width - 2 && b.bottom >= r.y + r.height - 2;
+  let el = hit;
+  while (!root(el) && !contains(el!.getBoundingClientRect())) el = el!.parentElement;
+  if (root(el)) el = root(hit) ? null : hit;
+  // The offset to the anchor (or the place in the document).
+  const b = el?.getBoundingClientRect() ?? { left: -scrollX, top: -scrollY };
+  return { el, x: r.x - b.left, y: r.y - b.top, width: r.width, height: r.height };
+}
+
+/** Where the marks are now (CSS pixels of the viewport); `gone`: the element is no longer shown. */
+function track(): void {
+  loop = 0;
+  if (!anchors.size) return;
+  const now = [...anchors].map(([id, a]) => {
+    if (a.el && !a.el.isConnected) return { id, gone: true };
+    const b = a.el?.getBoundingClientRect() ?? { left: -scrollX, top: -scrollY, width: 1, height: 1 };
+    if (!b.width && !b.height) return { id, gone: true };
+    return { id, x: Math.round(b.left + a.x), y: Math.round(b.top + a.y), width: Math.round(a.width), height: Math.round(a.height) };
+  });
+  const json = JSON.stringify(now);
+  if (json !== sent) { sent = json; ipcRenderer.send('habitab:marks', now); }
+  loop = requestAnimationFrame(track);
+}
+
+if (window === window.top) {
+  ipcRenderer.on('habitab:mark', (_e, m: { id: number; css: { x: number; y: number; width: number; height: number } }) => {
+    anchors.set(m.id, anchorFor(m.css));
+    sent = '';
+    if (!loop) loop = requestAnimationFrame(track);
+  });
+  ipcRenderer.on('habitab:unmark', (_e, id: number | null) => {
+    if (id === null) anchors.clear(); else anchors.delete(id);
+    if (!anchors.size && loop) { cancelAnimationFrame(loop); loop = 0; sent = ''; }
+  });
+  // A click on a mark that is out of view: the page scrolls to it.
+  ipcRenderer.on('habitab:mark-show', (_e, id: number) => {
+    const a = anchors.get(id);
+    if (!a) return;
+    if (a.el?.isConnected) {
+      // The anchor to the center (also in a scroll container); an anchor
+      // larger than the view: the document scrolls to the mark in it.
+      const b = a.el.getBoundingClientRect();
+      if (b.height <= innerHeight && b.width <= innerWidth) a.el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      else scrollBy({ left: b.left + a.x + a.width / 2 - innerWidth / 2, top: b.top + a.y + a.height / 2 - innerHeight / 2, behavior: 'smooth' });
+    } else if (!a.el) scrollTo({ left: a.x - (innerWidth - a.width) / 2, top: a.y - (innerHeight - a.height) / 2, behavior: 'smooth' });
+  });
+}
+
 if (process.platform === 'darwin') {
   contextBridge.executeInMainWorld({ func: installShare, args: [(json: string) => ipcRenderer.invoke('habitab:share', json)] });
 }

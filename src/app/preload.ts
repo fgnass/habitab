@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('habitab', {
   onFocusUrl: (cb: () => void) => ipcRenderer.on('focus-url', () => cb()),
   onAnnotateRect: (cb: (rect: { x: number; y: number; width: number; height: number }) => void) => ipcRenderer.on('annotate-rect', (_e, r) => cb(r)),
   onAnnotateSend: (cb: () => void) => ipcRenderer.on('annotate-send', () => cb()),
+  onAnnotateMarks: (cb: (marks: { id: number; rect: { x: number; y: number; width: number; height: number } | null }[]) => void) => ipcRenderer.on('annotate-marks', (_e, m) => cb(m)),
   onAnnotateFrame: (cb: (frame: { x: number; y: number; width: number; height: number }) => void) => ipcRenderer.on('annotate-frame', (_e, f) => cb(f)),
   onFocusSearch: (cb: () => void) => ipcRenderer.on('focus-search', () => cb()),
   onThumb: (cb: (tabId: number, url: string | null) => void) => ipcRenderer.on('thumb', (_e, id, url) => cb(id, url)),

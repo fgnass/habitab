@@ -77,12 +77,12 @@ let annotating = false;
 /** While the user marks, the agent's commands wait: the session held for it, and the control it had before (put back after). */
 let annotateHold: { s: Session; before: 'none' | 'auto' | 'manual'; tabs?: Set<Tab> } | null = null;
 /** What the user marked, taken at once (by the overlay's id of the mark): the page may change before the comments are written. */
-const marks = new Map<number, { tab: Tab; rect: Electron.Rectangle; done: Promise<Mark> }>();
+const marks = new Map<number, { tab: Tab; rect: Electron.Rectangle; done: Promise<Mark>; now?: Electron.Rectangle | null }>();
 /** Marks the user kept to send together with the next one (the overlay reports how many). */
 let annotateKept = 0;
 /** A marked area with the user's comment, as the overlay sends it (`id`: its mark). */
 type Note = { id?: number; rect: Electron.Rectangle; text: string; dictated?: boolean };
-type Mark = { image: Electron.NativeImage; url: string; css: Electron.Rectangle; page: { title: string; primary: string[]; inside: string[] } };
+type Mark = { image: Electron.NativeImage; url: string; css: Electron.Rectangle; page: { title: string; primary: string[]; inside: string[]; scroll?: { x: number; y: number } } };
 /** The page's frame in the overlay, as last sent to it (JSON). */
 let annotateFrame = '';
 /** Find in page: the bar lies at the top right of the selected page; the running query, its tab and the key hook. */
@@ -366,7 +366,9 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'findStep': return void (findTab && runFind({ forward: args[0] !== false, next: true }));
     case 'findClose': return closeFind();
     case 'annotateMark': return s?.active && annotateMark(s.active, args[0]);
-    case 'annotateDrop': return void marks.delete(args[0]);
+    case 'annotateDrop': return dropMark(args[0]);
+    // A click on the sign of marks out of view: the page scrolls to the mark.
+    case 'annotateShow': { const m = marks.get(args[0]); return void (m && !m.tab.view.webContents.isDestroyed() && m.tab.view.webContents.send('habitab:mark-show', args[0])); }
     case 'annotateKept': annotateKept = args[0]; return publish();
     // ⌥ held in the overlay: the user's mouse goes on to the page (a hover menu can open), in view coordinates of the page.
     case 'annotatePointer': return void (annotating && !timelinePreview && s?.active && annotatePointer(s.active, args[0]));
@@ -448,6 +450,7 @@ function setAnnotating(on: boolean, keepHold = false): void {
 }
 
 function clearMarks(): void {
+  for (const tab of new Set([...marks.values()].map(m => m.tab))) if (!tab.view.webContents.isDestroyed()) tab.view.webContents.send('habitab:unmark', null);
   marks.clear();
   annotateKept = 0;
 }
@@ -833,7 +836,7 @@ const DESCRIBE_AREA = `(r => {
   primary = primary.slice(0, 4);
   const inside = [];
   for (let e = primary[0]?.parentElement; e && e !== document.body && inside.length < 3; e = e.parentElement) inside.push(label(e));
-  return { title: document.title, primary: primary.map(el => label(el) + (short(el) ? ' "' + short(el) + '"' : '')), inside };
+  return { title: document.title, primary: primary.map(el => label(el) + (short(el) ? ' "' + short(el) + '"' : '')), inside, scroll: { x: Math.round(scrollX), y: Math.round(scrollY) } };
 })`;
 
 /**
@@ -846,6 +849,32 @@ function annotateMark(tab: Tab, m: { id: number; rect: Electron.Rectangle }): vo
   const done = captureMark(tab, m.rect);
   done.catch(() => {}); // A mark that is cancelled is never awaited.
   marks.set(m.id, { tab, rect: m.rect, done });
+  // The page tells where the mark is when it scrolls (page-preload.ts).
+  const wc = tab.view.webContents, f = viewScale(tab);
+  wc.send('habitab:mark', { id: m.id, css: { x: m.rect.x / f, y: m.rect.y / f, width: m.rect.width / f, height: m.rect.height / f } });
+}
+
+function dropMark(id: number): void {
+  const m = marks.get(id);
+  marks.delete(id);
+  if (m && !m.tab.view.webContents.isDestroyed()) m.tab.view.webContents.send('habitab:unmark', id);
+}
+
+/** View pixels per CSS pixel of the page (zoom, responsive-mode scale). */
+const viewScale = (tab: Tab) => tab.view.webContents.getZoomFactor() * (tab.emulation?.scale ?? 1);
+
+/** Where the marks of a page are now (page-preload.ts): to the overlay, in view pixels (null: the element is gone). */
+function marksMoved(sender: Electron.WebContents, list: { id: number; x?: number; y?: number; width?: number; height?: number; gone?: boolean }[]): void {
+  if (!annotating || !Array.isArray(list)) return;
+  const out: { id: number; rect: Electron.Rectangle | null }[] = [];
+  for (const p of list) {
+    const m = marks.get(p?.id);
+    if (!m || m.tab.view.webContents !== sender) continue;
+    const f = viewScale(m.tab);
+    m.now = p.gone ? null : { x: Math.round(Number(p.x) * f), y: Math.round(Number(p.y) * f), width: Math.round(Number(p.width) * f), height: Math.round(Number(p.height) * f) };
+    out.push({ id: p.id, rect: m.now });
+  }
+  if (out.length && !annotator.webContents.isDestroyed()) annotator.webContents.send('annotate-marks', out);
 }
 
 type PagePointer = { type: 'mouseMove' | 'mouseDown' | 'mouseUp' | 'mouseWheel'; x: number; y: number; button?: 'left' | 'middle'; clickCount?: number; deltaX?: number; deltaY?: number; modifiers?: string[] };
@@ -863,7 +892,7 @@ async function captureMark(tab: Tab, r: Electron.Rectangle): Promise<Mark> {
   const url = wc.getURL();
   const image = await wc.capturePage(r);
   // View pixels to CSS pixels of the page (zoom, responsive-mode scale).
-  const f = wc.getZoomFactor() * (tab.emulation?.scale ?? 1);
+  const f = viewScale(tab);
   const css = { x: r.x / f, y: r.y / f, width: r.width / f, height: r.height / f };
   let page: Mark['page'] = { title: wc.getTitle(), primary: [], inside: [] };
   try { page = await wc.executeJavaScriptInIsolatedWorld(999, [{ code: `${DESCRIBE_AREA}(${JSON.stringify(css)})` }]); } catch {}
@@ -887,12 +916,16 @@ async function annotateSubmit(s: Session, tab: Tab, data: Note | { notes: Note[]
   if (timelinePreview && timelineStep !== null) return annotateScreenshot(s, timelineStep, notes);
   // The marks taken when the drags ended; without one (a direct call) the page is taken now.
   const kept = notes.map(n => { const m = n.id !== undefined ? marks.get(n.id) : undefined; return m && m.tab === tab && sameRect(m.rect, n.rect) ? m.done : null; });
+  // Where the marks are now (the page may have scrolled since): for the overview.
+  const now = notes.map(n => { const m = n.id !== undefined ? marks.get(n.id) : undefined; return m?.now === undefined ? n.rect : m.now; });
   setAnnotating(false, true);
   try {
     const shots = await Promise.all(notes.map((n, i) => kept[i] ?? captureMark(tab, n.rect)));
     const { url, page } = shots[0];
     const marked = ({ css, page }: Mark) => {
-      const where = `${Math.round(css.width)} × ${Math.round(css.height)} px at ${Math.round(css.x)}, ${Math.round(css.y)}`;
+      // The user can scroll between marks: then the place in the viewport needs the scroll position.
+      const scrolled = page.scroll && (page.scroll.x || page.scroll.y) ? ` in the viewport, page scrolled to ${page.scroll.x}, ${page.scroll.y}` : '';
+      const where = `${Math.round(css.width)} × ${Math.round(css.height)} px at ${Math.round(css.x)}, ${Math.round(css.y)}${scrolled}`;
       return `Marked: ${page.primary.length ? page.primary.join(', ') + ' ' : ''}(${where}${page.inside.length ? `, inside ${page.inside.join(' > ')}` : ''})`;
     };
     const pageLine = `Page: ${url}${page.title ? ` ("${page.title}")` : ''}`;
@@ -901,7 +934,10 @@ async function annotateSubmit(s: Session, tab: Tab, data: Note | { notes: Note[]
       : [together(notes.length, 'the page'), pageLine, ...notes.flatMap((n, i) => [`${i + 1}. ${said(n)}`, `   ${marked(shots[i])}`])]
     ).join('\n');
     // For the clipboard (one image only): the part of the page with all marks, taken now (the agent still waits).
-    const overview = () => tab.view.webContents.capturePage(union(notes.map(n => n.rect)));
+    // When a mark is out of view (or gone), the first mark's image.
+    const b = tab.view.getBounds();
+    const inView = (r: Electron.Rectangle | null): r is Electron.Rectangle => !!r && r.x >= 0 && r.y >= 0 && r.x + r.width <= b.width && r.y + r.height <= b.height;
+    const overview = async () => now.every(inView) ? tab.view.webContents.capturePage(union(now as Electron.Rectangle[])) : shots[0].image;
     await deliverFeedback(s, { text, comment: notes.map(n => n.text).filter(Boolean).join('\n'), url, images: shots.map(x => x.image), overview });
   } finally { releaseMarkHold(); }
 }
@@ -1107,6 +1143,7 @@ function installer(op: string, ids?: string[]): Promise<any> {
 ipcMain.handle('setup', (_e, op: string, ids?: string[]) => installer(op, ids));
 ipcMain.handle('habitab:share', (e, json: string) => sharePage(e.sender.id, json));
 ipcMain.handle('habitab:speech', (e, json: string) => speechRequest(e.sender, json));
+ipcMain.on('habitab:marks', (e, list) => marksMoved(e.sender, list));
 ipcMain.on('habitab:draws', (e, draws: number) => manager?.drawReport(e.sender.id, draws));
 
 function openSetup(): void {

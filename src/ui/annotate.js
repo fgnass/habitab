@@ -6,6 +6,9 @@
 // the page area; the page is `frame` in it (in responsive mode smaller, so the
 // form can extend beside it). Marks stay in the frame and go out in page coordinates.
 // How marking works shows in the status line, not over the page.
+// The wheel always scrolls the page. Each mark follows its element (the page
+// reports where it is, see page-preload.ts); marks out of view show as a sign
+// at the top or bottom edge, and a click on it scrolls to them.
 const api = window.habitab;
 const $ = id => document.getElementById(id);
 let start = null, rect = null;
@@ -14,7 +17,12 @@ api.onAnnotateFrame(f => { frame = f; });
 const page = () => frame ?? { x: 0, y: 0, width: innerWidth, height: innerHeight };
 /** A point of the overlay, kept inside the page. */
 const inPage = (x, y) => { const f = page(); return { x: clamp(x, f.x, f.x + f.width), y: clamp(y, f.y, f.y + f.height) }; };
-/** The kept notes ({ id, rect, text, dictated }), in their order; `current` is the one in the form (a new one, or a kept one opened again). */
+/**
+ * The kept notes ({ id, rect, origin, gone, text, dictated }), in their order;
+ * `current` is the one in the form (a new one, or a kept one opened again).
+ * `rect` is where the area is now (the page can scroll), `origin` where it was
+ * marked (its picture is from then); `gone`: its element is no longer shown.
+ */
 let notes = [], current = null, nextId = 1;
 let channel = false;
 /** Over an earlier screenshot (timeline) there is no page to use (⌥ does nothing). */
@@ -36,26 +44,67 @@ api.onState(state => {
 });
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+/** Where an area is out of the page's view: 'above', 'below' or null (in view, at least in part). */
+function outside(r) {
+  const f = page();
+  if (r.x < f.x + f.width && r.x + r.width > f.x && r.y < f.y + f.height && r.y + r.height > f.y) return null;
+  return r.y + r.height / 2 < f.y + f.height / 2 ? 'above' : 'below';
+}
+
 function draw() {
+  const f = page();
   const r = $('rect');
   r.style.display = rect ? 'block' : 'none';
   document.body.classList.toggle('has-rect', !!rect);
   if (rect) Object.assign(r.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.width + 'px', height: rect.height + 'px' });
+  r.classList.toggle('gone', !!current?.gone);
   // The kept notes with their numbers (a click on the number opens the note); the one in the form is the rectangle above.
+  // They lie in a box over the page only (in responsive mode the overlay is larger).
+  Object.assign($('notes').style, { left: f.x + 'px', top: f.y + 'px', width: f.width + 'px', height: f.height + 'px' });
   $('notes').replaceChildren(...notes.flatMap((n, i) => {
     if (n === current) return [];
     const box = document.createElement('div');
-    box.className = 'note';
-    Object.assign(box.style, { left: n.rect.x + 'px', top: n.rect.y + 'px', width: n.rect.width + 'px', height: n.rect.height + 'px' });
+    box.className = 'note' + (n.gone ? ' gone' : '');
+    Object.assign(box.style, { left: n.rect.x - f.x + 'px', top: n.rect.y - f.y + 'px', width: n.rect.width + 'px', height: n.rect.height + 'px' });
     const num = document.createElement('button');
     num.className = 'num';
     num.textContent = i + 1;
     num.dataset.i = i;
-    num.title = n.text || 'No comment';
+    num.title = (n.text || 'No comment') + (n.gone ? ' (its element is no longer on the page)' : '');
     box.append(num);
     return [box];
   }));
+  // Marks out of view: a sign at the edge with their numbers; a click scrolls to the first.
+  const all = notes.includes(current) || !current ? notes : [...notes, current];
+  for (const side of ['above', 'below']) {
+    const away = all.map((n, i) => ({ n, i })).filter(({ n }) => n.rect && outside(n.rect) === side);
+    const sign = $(side);
+    sign.style.display = away.length && !still ? 'block' : 'none';
+    if (!away.length) continue;
+    sign.textContent = (side === 'above' ? '↑ ' : '↓ ') + away.map(x => x.i + 1).join(', ');
+    sign.title = `${away.length === 1 ? 'A mark is' : 'Marks are'} ${side} the view: click to scroll to ${away.length === 1 ? 'it' : 'the first'}`;
+    sign.dataset.id = away[0].n.id;
+    Object.assign(sign.style, { left: f.x + f.width / 2 + 'px', top: side === 'above' ? f.y + 8 + 'px' : '', bottom: side === 'below' ? innerHeight - (f.y + f.height) + 8 + 'px' : '' });
+  }
 }
+for (const side of ['above', 'below']) $(side).addEventListener('click', e => { e.stopPropagation(); api.action('annotateShow', +$(side).dataset.id); });
+
+// The page scrolled (or its layout changed): the marks follow their elements.
+api.onAnnotateMarks(list => {
+  const f = page();
+  let moved = false;
+  for (const { id, rect: r } of list) {
+    const n = notes.find(x => x.id === id) ?? (current?.id === id ? current : null);
+    if (!n) continue;
+    n.gone = !r;
+    if (r) n.rect = { x: r.x + f.x, y: r.y + f.y, width: r.width, height: r.height };
+    if (n === current) rect = n.rect;
+    moved = true;
+  }
+  if (!moved) return;
+  draw();
+  if ($('form').style.display === 'block' && rect) placeForm();
+});
 
 /** Labels that follow the number of notes: Send 3, and Remove in place of Cancel when other notes stay. */
 function buttons() {
@@ -153,7 +202,7 @@ function releaseThrough() {
 const BUTTONS = ['left', 'middle', 'right'];
 
 document.addEventListener('pointerdown', e => {
-  if (e.target.closest?.('#form')) return;
+  if (e.target.closest?.('#form, .edge')) return;
   if (passing(e) && !start) {
     e.preventDefault();
     if (e.button > 1) return;
@@ -192,8 +241,9 @@ document.addEventListener('pointerup', e => {
   showForm(true);
 });
 
+// The wheel always scrolls the page (marking needs no wheel), but not in the form or while dragging.
 document.addEventListener('wheel', e => {
-  if (!passing(e) || e.target.closest?.('#form')) return;
+  if (start || e.target.closest?.('#form')) return;
   e.preventDefault();
   toPage('mouseWheel', e, { deltaX: -e.deltaX, deltaY: -e.deltaY });
 }, { passive: false });
@@ -221,26 +271,31 @@ function edit(n) {
 
 function showForm(isNew) {
   if (isNew) {
-    current = { id: nextId++, rect, text: '', dictated: false };
+    current = { id: nextId++, rect, origin: rect, gone: false, text: '', dictated: false };
     // The picture is taken now: what the user sees goes out, also if the page changes while the comment is written.
     api.action('annotateMark', { id: current.id, rect: pageRect(rect) });
   }
   draw();
   buttons();
+  $('form').style.display = 'block';
+  placeForm();
+  $('text').focus();
+}
+
+/** The form below its area (or above it), inside the overlay. */
+function placeForm() {
   const form = $('form');
-  form.style.display = 'block';
   const w = form.offsetWidth, h = form.offsetHeight;
   const below = rect.y + rect.height + 8;
   form.style.left = clamp(rect.x, 8, innerWidth - w - 8) + 'px';
-  form.style.top = (below + h < innerHeight ? below : Math.max(8, rect.y - h - 8)) + 'px';
-  $('text').focus();
+  form.style.top = clamp(below + h < innerHeight ? below : rect.y - h - 8, 8, Math.max(8, innerHeight - h - 8)) + 'px';
 }
 
 /** All notes, the one in the form too, go out as one message. */
 function submit() {
   if (current) keep();
   if (!notes.length) return;
-  api.action('annotateSubmit', { notes: notes.map(n => ({ id: n.id, rect: pageRect(n.rect), text: n.text, dictated: n.dictated })) });
+  api.action('annotateSubmit', { notes: notes.map(n => ({ id: n.id, rect: pageRect(n.origin ?? n.rect), text: n.text, dictated: n.dictated })) });
   reset();
 }
 $('send').onclick = submit;

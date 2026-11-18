@@ -899,6 +899,36 @@ await sleep(400);
   const one = await viaStatus;
   check(one.text.includes('"Only one"') && !/areas/.test(one.text), 'the status line sends the kept notes', one.text.replace(/\n/g, ' | ').slice(0, 200));
   await control(`action ${sb.id} annotate false`);
+  // Marks follow the page: one scrolls with it, one on a fixed element stays.
+  // Out of view, a sign at the edge; a click on it scrolls back to the mark.
+  await b.tool('evaluate_script', { pageId: pb, function: `() => { document.body.insertAdjacentHTML('beforeend', '<div id="fixed-box" style="position:fixed;right:10px;top:10px;width:80px;height:40px;background:#0cf;z-index:9"></div><div id="tall" style="height:3000px"></div>'); scrollTo(0, 0); return 1; }` });
+  await control(`action ${sb.id} annotate true`);
+  await sleep(300);
+  await drag(10, 100, 60, 140);
+  await control(`ui annotator (() => { document.getElementById('text').value = 'Scrolls'; document.getElementById('add').click(); return 1; })()`);
+  await drag(420, 15, 480, 45);
+  await control(`ui annotator (() => { document.getElementById('text').value = 'Fixed'; document.getElementById('add').click(); return 1; })()`);
+  const tops = async () => (await uiEval('annotator', `[...document.querySelectorAll('.note')].map(n => parseFloat(n.style.top)).join(',') + '|' + document.getElementById('above').style.display + '|' + document.getElementById('above').textContent`))?.result ?? '';
+  const t0 = await tops();
+  await control(`ui page (() => { scrollBy(0, 50); return 1; })()`);
+  await sleep(300);
+  const t1 = await tops();
+  const [a0, f0] = t0.split('|')[0].split(',').map(Number), [a1, f1] = t1.split('|')[0].split(',').map(Number);
+  check(a1 < a0 - 20 && f1 === f0, 'marks follow the page: one scrolls with it, one on a fixed element stays', `${t0} -> ${t1}`);
+  await control(`ui page (() => { scrollBy(0, 1000); return 1; })()`);
+  await sleep(300);
+  const t2 = await tops();
+  check(t2.endsWith('|block|↑ 1'), 'a mark out of view shows as a sign at the edge', t2);
+  await control(`ui annotator (() => { document.getElementById('above').click(); return 1; })()`);
+  await sleep(1200);
+  const t3 = await tops();
+  check(t3.includes('|none|'), 'a click on the sign scrolls back to the mark', t3);
+  const scrolledNote = nextNote();
+  await control(`action ${sb.id} annotateSend`);
+  const sentScrolled = await scrolledNote;
+  check(/"Scrolls"/.test(sentScrolled.text) && /"Fixed"/.test(sentScrolled.text) && /50 × 40 px at 10, 100\b/.test(sentScrolled.text), 'marks that moved go out as they were marked', sentScrolled.text.replace(/\n/g, ' | ').slice(0, 400));
+  await control(`action ${sb.id} annotate false`);
+  await b.tool('evaluate_script', { pageId: pb, function: `() => { document.getElementById('fixed-box').remove(); document.getElementById('tall').remove(); scrollTo(0, 0); return 1; }` });
 }
 await control(`action ${sb.id} responsive`);
 await sleep(400);
