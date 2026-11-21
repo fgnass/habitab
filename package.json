@@ -19,6 +19,7 @@
   "build": {
     "appId": "dev.habitab.Habitab",
     "productName": "Habitab",
+    "protocols": [{ "name": "Habitab", "schemes": ["habitab"] }],
     "files": [
       "dist/**",
       "package.json",

@@ -1301,9 +1301,38 @@ app.whenReady().then(async () => {
   } catch (e: any) { log(`script install failed: ${e.message}`); }
   if (process.env.HABITAB_TEST_CONTROL === '1') (await import('./test-control')).attach(manager, { win, select, layout, publish, upstreamUrl, action, quit: () => app.quit(), clipboard: () => lastClipboard, background: () => empty, errors: () => errors.map(e => e.message), annotating: () => annotating, annotateKept: () => annotateKept, findText: () => findOpen ? findText : null, lastShare: () => lastShare, speechResult: (text, final) => speech.fakeResult(text, final), speechLevel: level => speech.fakeLevel(level), speechPermission: (wait: boolean) => { fakeMicWaits = wait; if (!wait) { fakeMicAnswer?.(); fakeMicAnswer = undefined; } }, speechStall: (on: boolean) => speech.fakeStall(on), view: name => ({ sidebar, topbar, responsive, timeline, annotator, status, find, devtools: selected()?.devtools } as Record<string, WebContentsView | undefined>)[name] });
   log(`app ready, chromium ${process.versions.chrome}`);
+  ready = true;
+  if (pendingLink) openLink(pendingLink);
 });
 
 app.on('second-instance', () => { win?.show(); win?.focus(); });
+
+// MARK: habitab:// links
+
+/** A link that started the app waits until the window and the sessions are there. */
+let ready = false;
+let pendingLink: string | undefined;
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  if (ready) openLink(url); else pendingLink = url;
+});
+
+/**
+ * habitab://session/<id> selects the session and shows the window. A terminal app
+ * uses it to go from the agent's terminal to its browser.
+ */
+function openLink(url: string): void {
+  let u: URL;
+  try { u = new URL(url); } catch { return; }
+  log(`link ${url}`);
+  if (u.hostname === 'session') {
+    const id = decodeURIComponent(u.pathname.slice(1));
+    if (manager.sessions.has(id)) select(id);
+  }
+  win.show();
+  win.focus();
+}
+
 app.on('activate', () => { win?.show(); });
 /** Quitting asks first when an agent called a tool in this time. */
 const BUSY_MS = 15_000;
