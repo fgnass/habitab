@@ -22,93 +22,151 @@ const JUICES = [
   { id: 'ginger-shot', name: 'Ginger Shot', tag: 'Shot · 60 ml', desc: 'Ginger, lemon, turmeric, black pepper. Not for the faint of heart.', price: 2.9, juice: '#f2c94c', bg: '#fdf5d9', fruit: 'lemon' },
 ];
 
-/** A juice bottle (SVG): flat, in the juice's color, with a white label. */
+/** Wraps a juice name into short label lines: "Mango & Passion Fruit" → Mango & / Passion / Fruit. */
+function labelLines(name, max = 10) {
+  const lines = [];
+  for (const w of name.split(' ')) {
+    const last = lines.at(-1);
+    if (last && (last + ' ' + w).length <= max) lines[lines.length - 1] = last + ' ' + w; else lines.push(w);
+  }
+  return lines;
+}
+
+let bottleId = 0;
+/**
+ * A juice bottle (SVG): glass with the juice in it, a cap in a dark shade of the juice, a cream label
+ * with a dot in the juice's color, and a soft shadow to stand on.
+ */
 function bottle(j, size = 180) {
-  const label = j.name.length > 14 ? j.name.split(' & ') : [j.name];
+  const id = `b${++bottleId}`;
+  const lines = labelLines(j.name);
+  const longest = Math.max(...lines.map(l => l.length));
+  const fs = Math.min(9.5, 46 / (longest * 0.56));
+  const y0 = 124 - (lines.length - 1) * fs * 0.55;
+  const body = 'M40 26 H80 V40 Q92 50 92 70 V178 Q92 192 78 192 H42 Q28 192 28 178 V70 Q28 50 40 40 Z';
   return `<svg viewBox="0 0 120 200" width="${size * 0.6}" height="${size}" aria-hidden="true">
-    <rect x="44" y="6" width="32" height="18" rx="3" fill="#2b2b2b"/>
-    <path d="M40 24 H80 V40 Q92 50 92 70 V178 Q92 194 76 194 H44 Q28 194 28 178 V70 Q28 50 40 40 Z" fill="${j.juice}"/>
-    <path d="M40 24 H80 V40 Q92 50 92 70 V178 Q92 194 76 194 H44 Q28 194 28 178 V70 Q28 50 40 40 Z" fill="#fff" opacity=".12"/>
-    <rect x="34" y="52" width="6" height="110" rx="3" fill="#fff" opacity=".35"/>
-    <rect x="28" y="88" width="64" height="58" fill="#fff"/>
-    ${label.map((t, i) => `<text x="60" y="${label.length === 1 ? 118 : 110 + i * 18}" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="${t.length > 9 ? 9 : 11}" font-weight="700" fill="#1a1a1a">${esc(t)}</text>`).join('')}
-    <text x="60" y="${label.length === 1 ? 134 : 140}" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="6.5" letter-spacing="1.2" fill="#777">JUICE SHOP</text>
+    <defs>
+      <clipPath id="${id}c"><path d="${body}"/></clipPath>
+      <linearGradient id="${id}g" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".35" stop-color="#fff" stop-opacity="0"/><stop offset=".8" stop-color="#000" stop-opacity=".04"/><stop offset="1" stop-color="#000" stop-opacity=".16"/></linearGradient>
+    </defs>
+    <ellipse cx="60" cy="193" rx="38" ry="4.5" fill="#3b2a1e" opacity=".13"/>
+    <g clip-path="url(#${id}c)">
+      <rect width="120" height="200" fill="${j.juice}" opacity=".28"/>
+      <rect y="47" width="120" height="160" fill="${j.juice}"/>
+      <rect y="47" width="120" height="2" fill="#fff" opacity=".25"/>
+      <rect width="120" height="200" fill="url(#${id}g)"/>
+    </g>
+    <rect x="35" y="58" width="5" height="96" rx="2.5" fill="#fff" opacity=".38"/>
+    <rect x="43" y="10" width="34" height="18" rx="4" fill="${j.juice}"/>
+    <rect x="43" y="10" width="34" height="18" rx="4" fill="#2b211c" opacity=".38"/>
+    <rect x="47" y="13" width="3" height="11" rx="1.5" fill="#fff" opacity=".22"/>
+    <rect x="31" y="84" width="58" height="72" rx="7" fill="#fffaf2"/>
+    <circle cx="60" cy="${y0 - fs - 7}" r="4.5" fill="${j.juice}"/>
+    ${lines.map((t, i) => `<text x="60" y="${(y0 + i * fs * 1.2).toFixed(1)}" text-anchor="middle" font-family="'Avenir Next', system-ui, sans-serif" font-size="${fs.toFixed(1)}" font-weight="600" fill="#2b211c">${esc(t)}</text>`).join('')}
+    <text x="60" y="148" text-anchor="middle" font-family="'Avenir Next', system-ui, sans-serif" font-size="5" font-weight="500" letter-spacing="1.3" fill="#9a8b7e">JUICE SHOP</text>
   </svg>`;
 }
 
 const euro = n => `€${n.toFixed(2)}`;
 
 const SHOP_CSS = `
-  :root { --ink: #1a1a1a; --muted: #6b6b6b; --line: #e6e6e6; --orange: #f28c28; --orange-dark: #d9731a; }
-  * { box-sizing: border-box; } body { margin: 0; background: #fff; color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  :root { --bg: #fbf7f1; --paper: #fff; --ink: #2b211c; --text: #4d4038; --muted: #85766b; --line: #ece3d7; --field: #e2d7c9;
+    --accent: #df5a2c; --accent-dark: #c34a20; --accent-soft: #fdf0e8; --head: "Avenir Next", system-ui, sans-serif; }
+  * { box-sizing: border-box; } body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   a { color: inherit; text-decoration: none; }
-  .promo { background: var(--ink); color: #fff; text-align: center; font-size: 13px; padding: 7px; }
-  header { background: linear-gradient(100deg, #ffd9a8 0%, #ffb866 55%, #ff9f52 100%); color: var(--ink); }
-  nav { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; gap: 36px; padding: 0 32px; height: 68px; }
-  .logo { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 800; letter-spacing: -.5px; }
+  h1, h2, h3, h4, .logo, .price { font-family: var(--head); }
+  .promo { background: #f3e8db; color: #6e5443; text-align: center; font-size: 12.5px; padding: 7px; letter-spacing: .2px; }
+  header { background: var(--bg); border-bottom: 1px solid var(--line); }
+  nav { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; gap: 40px; padding: 0 32px; height: 70px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 700; letter-spacing: -.3px; }
   .logo svg { width: 30px; height: 30px; }
-  nav .links { display: flex; gap: 24px; font-size: 15px; font-weight: 500; } nav .links a.on { text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 2px; }
-  nav .right { margin-left: auto; display: flex; gap: 20px; align-items: center; font-size: 14px; font-weight: 500; }
-  .cart-btn { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: var(--ink); color: #fff; font-weight: 600; border-radius: 4px; }
-  .cart-btn b { background: #fff; color: var(--ink); border-radius: 999px; padding: 0 7px; font-size: 12px; }
+  nav .links { display: flex; gap: 26px; font-size: 14.5px; font-weight: 500; color: var(--muted); }
+  nav .links a.on { color: var(--ink); position: relative; } nav .links a.on::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--accent); }
+  nav .right { margin-left: auto; display: flex; gap: 22px; align-items: center; font-size: 14.5px; font-weight: 500; color: var(--muted); }
+  .cart-btn { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; background: var(--ink); color: #fff; font-weight: 600; border-radius: 999px; }
+  .cart-btn b { background: var(--accent); color: #fff; border-radius: 999px; min-width: 22px; padding: 0 7px; font-size: 12px; line-height: 22px; text-align: center; }
   .wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 4px; padding: 13px 22px; font: 600 15px/1 inherit; cursor: pointer; }
-  .btn.primary { background: var(--orange); color: var(--ink); } .btn.dark { background: var(--ink); color: #fff; } .btn.ghost { background: #fff; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
-  .hero { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; margin: 28px 0 44px; background: #fdeedc; border-radius: 8px; padding: 40px 48px; }
-  .hero h1 { font-size: 48px; line-height: 1.05; margin: 0 0 14px; letter-spacing: -1px; font-weight: 800; }
-  .hero p { font-size: 17px; color: #4a4a4a; max-width: 440px; margin: 0 0 24px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 999px; padding: 14px 24px; font: 600 15px/1 inherit; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #fff; box-shadow: 0 1px 0 rgba(255,255,255,.25) inset, 0 6px 16px -8px rgba(195,74,32,.7); }
+  .btn.dark { background: var(--ink); color: #fff; } .btn.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1px #cdbfb0; }
+  .hero { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; margin: 28px 0 0; background: #f6e9d9; border-radius: 24px; padding: 52px 56px 44px; }
+  .hero h1 { font-size: 50px; line-height: 1.06; margin: 0 0 16px; letter-spacing: -1.2px; font-weight: 700; }
+  .hero p { font-size: 17px; color: var(--text); max-width: 440px; margin: 0 0 28px; }
   .hero .bottles { display: flex; justify-content: center; align-items: flex-end; gap: 18px; }
-  .usp { display: flex; gap: 32px; margin: 0 0 32px; font-size: 14px; color: var(--muted); } .usp b { color: var(--ink); }
-  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 18px; }
-  .section-head h2 { font-size: 26px; margin: 0; font-weight: 800; letter-spacing: -.4px; }
-  .filters { display: flex; gap: 6px; } .chip { padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; color: var(--muted); }
+  .usp { display: flex; gap: 36px; margin: 0 0 44px; padding: 18px 4px; font-size: 14px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .usp span::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin: 0 10px 2px 0; } .usp b { color: var(--ink); font-weight: 600; }
+  .section-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 20px; }
+  .section-head h2 { font-size: 26px; margin: 0; font-weight: 700; letter-spacing: -.4px; }
+  .filters { display: flex; gap: 6px; } .chip { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; color: var(--text); background: var(--paper); }
   .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
-  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; padding-bottom: 56px; }
-  .product { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
-  .product .img { height: 220px; display: grid; place-items: center; }
-  .product .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
-  .product h3 { margin: 0; font-size: 17px; } .product .tag { color: var(--muted); font-size: 13px; }
-  .row { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; }
-  .price { font-size: 17px; font-weight: 700; } .price small { color: var(--muted); font-weight: 400; font-size: 13px; }
-  .add { border: 0; border-radius: 4px; padding: 9px 14px; background: var(--orange); color: var(--ink); font: 600 13px/1 inherit; }
-  .crumbs { font-size: 13px; color: var(--muted); padding: 22px 0 0; } .crumbs a { text-decoration: underline; text-underline-offset: 3px; }
-  .pdp { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; padding: 24px 0 60px; }
-  .pdp .stage { border-radius: 8px; display: grid; place-items: center; height: 520px; }
-  .pdp h1 { font-size: 40px; margin: 6px 0 8px; letter-spacing: -.6px; font-weight: 800; } .pdp .lead { color: #4a4a4a; font-size: 16.5px; margin: 10px 0 22px; }
-  .pdp .tag { color: var(--muted); font-size: 14px; }
-  .opt { margin: 18px 0 0; } .opt label { font-size: 13px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 8px; }
-  .seg { display: flex; gap: 8px; } .seg span { padding: 10px 16px; border: 1px solid var(--line); border-radius: 4px; font-size: 14px; }
-  .seg span.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); font-weight: 600; }
-  .buy { display: flex; gap: 12px; margin-top: 26px; align-items: center; }
-  .qty { display: flex; align-items: center; gap: 14px; padding: 11px 16px; border: 1px solid var(--line); border-radius: 4px; font-weight: 600; }
-  .facts { margin-top: 28px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); }
-  .facts div { padding: 14px 0; font-size: 13px; color: var(--muted); } .facts b { display: block; color: var(--ink); font-size: 15px; }
-  .two { display: grid; grid-template-columns: 1.5fr 1fr; gap: 32px; padding: 28px 0 60px; align-items: start; }
-  .panel { border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
-  .panel h2 { margin: 0 0 16px; font-size: 22px; font-weight: 800; letter-spacing: -.3px; }
-  .line { display: grid; grid-template-columns: 76px 1fr auto auto; gap: 18px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
-  .line.compact { grid-template-columns: 64px 1fr auto; gap: 14px; } .line.compact .thumb { width: 64px; height: 64px; }
-  .line:first-of-type { border-top: 0; } .line .thumb { width: 76px; height: 76px; border-radius: 6px; display: grid; place-items: center; overflow: hidden; }
-  .line h4 { margin: 0; font-size: 16px; } .line p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-  .sum { display: flex; justify-content: space-between; padding: 7px 0; font-size: 14.5px; color: var(--muted); } .sum b { color: var(--ink); }
-  .sum.total { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 14px; font-size: 18px; color: var(--ink); font-weight: 700; }
-  .field { display: grid; gap: 6px; margin-bottom: 14px; } .field span { font-size: 13px; color: var(--muted); font-weight: 600; }
-  .field input { font: inherit; padding: 12px 14px; border-radius: 4px; border: 1px solid #cfcfcf; background: #fff; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 36px 24px; padding-bottom: 64px; }
+  .product { display: flex; flex-direction: column; }
+  .product .img { height: 236px; display: grid; place-items: center; border-radius: 18px; padding-top: 8px; }
+  .product .body { padding: 14px 4px 0; display: flex; flex-direction: column; gap: 1px; flex: 1; }
+  .product h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.1px; } .product .tag { color: var(--muted); font-size: 13.5px; }
+  .row { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 8px; }
+  .price { font-size: 17px; font-weight: 600; } .price small { color: var(--muted); font: 400 13px/1 -apple-system, system-ui, sans-serif; }
+  .add { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--field); border-radius: 50%; padding: 0; background: var(--paper); color: var(--ink); cursor: pointer; }
+  .add svg { width: 14px; height: 14px; }
+  .crumbs { font-size: 13px; color: var(--muted); padding: 24px 0 0; } .crumbs a { color: var(--text); } .crumbs i { font-style: normal; margin: 0 6px; color: #c4b6a8; }
+  .pdp { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; padding: 20px 0 64px; }
+  .pdp .stage { border-radius: 24px; display: grid; place-items: center; height: 540px; }
+  .pdp h1 { font-size: 42px; margin: 4px 0 6px; letter-spacing: -.8px; font-weight: 700; } .pdp .lead { color: var(--text); font-size: 16.5px; margin: 14px 0 24px; max-width: 460px; }
+  .pdp .tag { color: var(--accent-dark); font-size: 13px; font-weight: 600; letter-spacing: .3px; } .pdp > div:last-child { padding-top: 24px; }
+  .opt { margin: 20px 0 0; } .opt label { font-size: 13px; color: var(--muted); font-weight: 500; display: block; margin-bottom: 8px; }
+  .seg { display: flex; gap: 8px; flex-wrap: wrap; } .seg span { padding: 10px 16px; border: 1px solid var(--line); border-radius: 12px; font-size: 14px; background: var(--paper); color: var(--text); }
+  .seg span.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); color: var(--ink); font-weight: 600; }
+  .buy { display: flex; gap: 12px; margin-top: 30px; align-items: center; }
+  .qty { display: inline-flex; align-items: center; gap: 14px; padding: 0 6px; height: 46px; border: 1px solid var(--field); border-radius: 999px; font-weight: 600; background: var(--paper); }
+  .qty i { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; font-style: normal; color: var(--muted); font-weight: 400; font-size: 18px; }
+  .qty.small { height: 36px; gap: 8px; padding: 0 3px; } .qty.small i { width: 26px; height: 26px; font-size: 16px; }
+  .buy .btn { height: 46px; }
+  .facts { margin-top: 32px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); }
+  .facts div { padding: 16px 0; font-size: 13px; color: var(--muted); } .facts b { display: block; color: var(--ink); font: 600 15px var(--head); }
+  .two { display: grid; grid-template-columns: 1.5fr 1fr; gap: 28px; padding: 24px 0 64px; align-items: start; }
+  .panel { background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: 28px; box-shadow: 0 1px 2px rgba(60,40,20,.03), 0 12px 32px -24px rgba(60,40,20,.25); }
+  .panel h2 { margin: 0 0 18px; font-size: 21px; font-weight: 700; letter-spacing: -.3px; }
+  .line { display: grid; grid-template-columns: 76px 1fr auto 72px; gap: 18px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
+  .line.compact { grid-template-columns: 60px 1fr auto; gap: 14px; padding: 12px 0; } .line.compact .thumb { width: 60px; height: 60px; }
+  .line:first-of-type { border-top: 0; padding-top: 0; } .line .thumb { width: 76px; height: 76px; border-radius: 14px; display: grid; place-items: center; overflow: hidden; }
+  .line h4 { margin: 0; font-size: 16px; font-weight: 600; } .line p { margin: 1px 0 0; color: var(--muted); font-size: 13px; } .line > b { font-weight: 600; text-align: right; }
+  .sum { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14.5px; color: var(--muted); } .sum b { color: var(--ink); font-weight: 500; }
+  .line + .sum { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 16px; }
+  .sum.total { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 16px; font: 700 19px var(--head); color: var(--ink); }
+  .field { display: grid; gap: 6px; margin-bottom: 16px; } .field span { font-size: 13px; color: var(--text); font-weight: 500; }
+  .field input { font: inherit; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--field); background: #fdfbf8; color: var(--ink); outline: none; }
+  .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(223,90,44,.15); background: #fff; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } .cols3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 14px; }
-  .ship { display: grid; gap: 10px; } .ship div { cursor: pointer; display: flex; justify-content: space-between; padding: 14px 16px; border-radius: 4px; border: 1px solid var(--line); font-size: 14px; }
-  .ship div.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
-  .steps { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); margin: 26px 0 0; } .steps b { color: var(--ink); }
-  footer { border-top: 1px solid var(--line); margin-top: 20px; padding: 26px 32px; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; max-width: 1180px; margin-left: auto; margin-right: auto; }  /* Phone width (responsive mode screenshots). */
+  .ship { display: grid; gap: 10px; } .ship div { cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-radius: 14px; border: 1px solid var(--field); font-size: 14px; color: var(--text); }
+  .ship div span { display: flex; align-items: center; gap: 4px; } .ship div b { color: var(--ink); font-weight: 600; }
+  .ship div span::before { content: ""; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #cbbcad; margin-right: 10px; flex: none; box-sizing: border-box; }
+  .ship div.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+  .ship div.on span::before { border: 5px solid var(--accent); background: #fff; }
+  .steps { display: flex; gap: 8px; align-items: center; list-style: none; padding: 0; font-size: 13px; color: var(--muted); margin: 28px 0 0; counter-reset: step; }
+  .steps li { display: flex; align-items: center; gap: 8px; counter-increment: step; } .steps li + li::before { content: ""; width: 28px; height: 1px; background: var(--field); margin-right: 0; }
+  .steps li span::before { content: counter(step); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--field); margin-right: 8px; font-size: 11.5px; font-weight: 600; background: var(--paper); }
+  .steps li.on { color: var(--ink); font-weight: 600; } .steps li.on span::before { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .steps li.done span::before { content: "✓"; color: var(--accent-dark); border-color: #f1c9b6; background: var(--accent-soft); }
+  footer { border-top: 1px solid var(--line); margin-top: 20px; padding: 26px 0; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; max-width: 1116px; margin-left: auto; margin-right: auto; }
+  /* Phone width (responsive mode screenshots). */
   @media (max-width: 700px) {
-    nav { gap: 16px; padding: 0 16px; height: 58px; } .logo { white-space: nowrap; font-size: 19px; }
+    nav { gap: 16px; padding: 0 16px; height: 60px; } .logo { white-space: nowrap; font-size: 19px; }
     nav .links, nav .right span { display: none; }
-    .wrap { padding: 0 16px; } footer { padding: 22px 16px; flex-direction: column; gap: 6px; }
-    .hero, .pdp, .two, .cols, .cols3 { grid-template-columns: 1fr; } .hero { padding: 28px 24px; } .two { gap: 20px; padding-top: 20px; }
-    .panel { padding: 20px 18px; } .grid { grid-template-columns: 1fr 1fr; gap: 14px; } .usp { flex-wrap: wrap; gap: 8px 20px; } .facts { grid-template-columns: 1fr; }
+    .wrap { padding: 0 16px; } footer { padding: 22px 0; margin-left: 16px; margin-right: 16px; flex-direction: column; gap: 6px; }
+    .hero, .pdp, .two, .cols, .cols3 { grid-template-columns: 1fr; } .hero { padding: 32px 24px; border-radius: 20px; } .two { gap: 20px; padding-top: 20px; }
+    .pdp { gap: 24px; } .pdp .stage { height: 400px; } .pdp > div:last-child { padding-top: 0; }
+    .panel { padding: 22px 18px; border-radius: 18px; } .grid { grid-template-columns: 1fr 1fr; gap: 24px 14px; } .product .img { height: 200px; }
+    .usp { flex-direction: column; gap: 6px; margin-bottom: 32px; } .facts { grid-template-columns: 1fr; }
+    .section-head { flex-direction: column; align-items: flex-start; gap: 12px; }
   }
 `;
 
-const LOGO = `<svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#1a1a1a"/><circle cx="16" cy="16" r="11" fill="#f28c28"/><path d="M16 5 V27 M5 16 H27 M8.2 8.2 L23.8 23.8 M23.8 8.2 L8.2 23.8" stroke="#1a1a1a" stroke-width="1.5"/><circle cx="16" cy="16" r="2.4" fill="#1a1a1a"/></svg>`;
+const LOGO = `<svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#df5a2c"/><circle cx="16" cy="16" r="12.2" fill="#fbf7f1"/><circle cx="16" cy="16" r="11" fill="#f39a4a"/><path d="M16 5 V27 M5 16 H27 M8.2 8.2 L23.8 23.8 M23.8 8.2 L8.2 23.8" stroke="#fbf7f1" stroke-width="1.4"/><circle cx="16" cy="16" r="2.2" fill="#fbf7f1"/></svg>`;
+const PLUS = `<svg viewBox="0 0 14 14"><path d="M7 2 V12 M2 7 H12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+/** A quantity stepper; `small` for cart lines. */
+const qty = (n, small = false) => `<span class="qty${small ? ' small' : ''}"><i>−</i>${n}<i>+</i></span>`;
+/** The checkout steps; `at`: the index of the current step. */
+const steps = at => `<ol class="steps">${['Cart', 'Delivery', 'Payment'].map((t, i) => `<li class="${i < at ? 'done' : i === at ? 'on' : ''}"><span>${t}</span></li>`).join('')}</ol>`;
 
 function shopChrome(active, body) {
   const links = [['Juices', '/shop'], ['Shots', '#'], ['Bundles', '#'], ['Subscriptions', '#'], ['About', '#']];
@@ -117,7 +175,7 @@ function shopChrome(active, body) {
     <div class="links">${links.map(([t, h]) => `<a href="${h}" class="${t === active ? 'on' : ''}">${t}</a>`).join('')}</div>
     <div class="right"><span>Search</span><span>Account</span><a class="cart-btn" href="/shop/cart">Cart <b>3</b></a></div></nav></header>
   ${body}
-  <footer><span>© 2026 Juice Shop GmbH, Hamburg</span><span>Delivery · Returns · Contact · Imprint</span></footer>`;
+  <footer><span>Juice Shop · Pressed in Hamburg</span><span>Delivery · Returns · Contact · Imprint</span></footer>`;
 }
 
 const tint = j => `background: ${j.bg}`;
@@ -146,14 +204,14 @@ function shopHome() {
     <div class="grid">${JUICES.map(j => `<a class="product" href="/shop/juice/${j.id}">
       <div class="img" style="${tint(j)}">${bottle(j, 170)}</div>
       <div class="body"><h3>${esc(j.name)}</h3><div class="tag">${esc(j.tag)}</div>
-        <div class="row"><div class="price">${euro(j.price)} <small>/ ${j.id === 'ginger-shot' ? '60 ml' : '250 ml'}</small></div><button class="add">Add</button></div></div></a>`).join('')}
+        <div class="row"><div class="price">${euro(j.price)} <small>/ ${j.id === 'ginger-shot' ? '60 ml' : '250 ml'}</small></div><button class="add" aria-label="Add ${esc(j.name)}">${PLUS}</button></div></div></a>`).join('')}
     </div></div>`));
 }
 
 function shopProduct(id) {
   const j = JUICES.find(x => x.id === id) ?? JUICES[0];
   return page(`${j.name} — Juice Shop`, SHOP_CSS, shopChrome('Juices', `<div class="wrap">
-    <div class="crumbs"><a href="/shop">Juices</a> / ${esc(j.name)}</div>
+    <div class="crumbs"><a href="/shop">Juices</a><i>/</i>${esc(j.name)}</div>
     <section class="pdp"><div class="stage" style="${tint(j)}">${bottle(j, 400)}</div>
     <div><div class="tag">${esc(j.tag)}</div>
       <h1>${esc(j.name)}</h1>
@@ -161,21 +219,21 @@ function shopProduct(id) {
       <p class="lead">${esc(j.desc)}</p>
       <div class="opt"><label>Size</label><div class="seg"><span class="on">250 ml · ${euro(j.price)}</span><span>500 ml · ${euro(j.price * 1.8)}</span><span>1 l · ${euro(j.price * 3.2)}</span></div></div>
       <div class="opt"><label>Delivery</label><div class="seg"><span class="on">Once</span><span>Every week · −10 %</span></div></div>
-      <div class="buy"><span class="qty">−&nbsp; 1 &nbsp;+</span><a class="btn primary" href="/shop/cart">Add to cart · ${euro(j.price)}</a></div>
+      <div class="buy">${qty(1)}<a class="btn primary" href="/shop/cart">Add to cart · ${euro(j.price)}</a></div>
       <div class="facts"><div><b>Tomorrow</b>Delivery</div><div><b>4 days</b>Best before</div><div><b>Returnable</b>Glass bottle</div></div>
     </div></section></div>`));
 }
 
 const CART = [{ j: JUICES[0], qty: 2, size: '500 ml' }, { j: JUICES[2], qty: 1, size: '250 ml' }];
 /** Cart lines; `compact` (order summary): the quantity as text instead of the stepper. */
-const cartLines = (compact = false) => CART.map(({ j, qty, size }) => `<div class="line${compact ? ' compact' : ''}"><div class="thumb" style="${tint(j)}">${bottle(j, 60)}</div>
-  <div><h4>${esc(j.name)}</h4><p>${esc(size)}${compact ? ` · Qty ${qty}` : ''}</p></div>${compact ? '' : `<span class="qty">−&nbsp; ${qty} &nbsp;+</span>`}<b>${euro(j.price * qty * (size.startsWith('500') ? 1.8 : 1))}</b></div>`).join('');
+const cartLines = (compact = false) => CART.map(({ j, qty: n, size }) => `<div class="line${compact ? ' compact' : ''}"><div class="thumb" style="${tint(j)}">${bottle(j, 60)}</div>
+  <div><h4>${esc(j.name)}</h4><p>${esc(size)}${compact ? ` · Qty ${n}` : ''}</p></div>${compact ? '' : `${qty(n, true)}`}<b>${euro(j.price * n * (size.startsWith('500') ? 1.8 : 1))}</b></div>`).join('');
 const subtotal = () => CART.reduce((n, { j, qty, size }) => n + j.price * qty * (size.startsWith('500') ? 1.8 : 1), 0);
 
 function shopCart() {
   const sub = subtotal();
   return page('Your cart — Juice Shop', SHOP_CSS, shopChrome('', `<div class="wrap">
-    <div class="steps"><b>Cart</b> → Delivery → Payment</div>
+    ${steps(0)}
     <section class="two"><div class="panel"><h2>Your cart</h2>${cartLines()}</div>
     <div class="panel"><h2>Summary</h2>
       <div class="sum"><span>Subtotal</span><b>${euro(sub)}</b></div><div class="sum"><span>Deposit (3 bottles)</span><b>€0.75</b></div><div class="sum"><span>Delivery</span><b>Free</b></div>
@@ -195,7 +253,7 @@ function shopCheckout(blank = false) {
     setTimeout(() => { document.querySelector('#total').textContent = '€' + cart.total.toFixed(2); });
   </script>`;
   return page('Checkout — Juice Shop', SHOP_CSS, shopChrome('', `<div class="wrap">
-    <div class="steps">Cart → <b>Delivery</b> → Payment</div>
+    ${steps(1)}
     <section class="two"><div class="panel"><h2>Delivery address</h2>
       ${field('Email', 'mara.lindqvist@example.com')}
       <div class="cols">${field('First name', 'Mara')}${field('Last name', 'Lindqvist')}</div>
