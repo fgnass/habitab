@@ -99,7 +99,7 @@ const MENU = `(() => {
   document.body.append(m); return "ok";
 })()`.replace(/\n\s*/g, ' ');
 // Page coordinates of the deposit line in the order box, and the note about it.
-const DEPOSIT = { x: 818, y: 496 };
+const DEPOSIT = { x: 827, y: 486 };
 const NOTE = 'Show the deposit next to each bottle, not only here. People think it is a fee.';
 // The hero on phones: the order box with the note, readable at a small width.
 const HERO_MOBILE_CROP = [1230, 940, 470, 1940];
