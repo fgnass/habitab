@@ -1245,6 +1245,11 @@ function zoom(delta: number): void {
 // MARK: Start
 
 app.whenReady().then(async () => {
+  // The DevTools endpoint is open now. Without the switch, renderers started
+  // from now on do not get it: with it, Chromium sets navigator.webdriver to
+  // true in every page, and Cloudflare & co. treat the page as a bot.
+  app.commandLine.removeSwitch('remote-debugging-port');
+  app.commandLine.removeSwitch('remote-debugging-address');
   nativeTheme.themeSource = 'system';
   win = new BaseWindow({
     width: 1500, height: 960, minWidth: 900, minHeight: 560, title: 'Habitab',

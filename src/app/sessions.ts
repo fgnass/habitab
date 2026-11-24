@@ -693,6 +693,8 @@ export class SessionManager {
     this.configured.add(ses);
     // Look like Chrome, not like Electron, so sites behave as in a browser.
     ses.setUserAgent(chrome.userAgent(ses.getUserAgent()));
+    // navigator.userAgent of out-of-process frames comes from the app, not the session.
+    app.userAgentFallback = chrome.userAgent(app.userAgentFallback);
     ses.webRequest.onBeforeSendHeaders((d, cb) => {
       const secure = d.url.startsWith('https:') || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(d.url);
       cb({ requestHeaders: secure ? { ...d.requestHeaders, ...chrome.headers } : d.requestHeaders });
@@ -810,6 +812,7 @@ export class SessionManager {
     // navigation the command only answers once the page exists. The override
     // lives in this debugger session, so it stays attached.
     void this.cdp(tab, 'Network.setUserAgentOverride', chrome.override(wc.session.getUserAgent()));
+    this.overrideFrames(wc);
     s.ctx ??= targetInfo.browserContextId;
     if (s.launch.viewport) {
       const [w, h] = s.launch.viewport.split('x').map(Number);
@@ -1533,6 +1536,31 @@ export class SessionManager {
       ? { width, height, deviceScaleFactor: e.dpr, mobile: e.mobile, ...e.params, scale }
       : { width, height, screenWidth: width, screenHeight: height, deviceScaleFactor: e.dpr, mobile: e.mobile, scale };
     tab.emulationSent = this.cdp(tab, 'Emulation.setDeviceMetricsOverride', p);
+  }
+
+  /**
+   * Frames of other sites run in processes of their own (out-of-process
+   * iframes, e.g. the Cloudflare Turnstile widget). The page's user agent
+   * override does not reach them: each one gets it before its scripts run.
+   * Other targets (workers) go on unchanged.
+   */
+  private overrideFrames(wc: WebContents): void {
+    const d = wc.debugger;
+    const autoAttach = (sessionId?: string) => d.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId);
+    d.on('message', (_e, method, params) => {
+      if (method !== 'Target.attachedToTarget') return;
+      const { sessionId, targetInfo } = params;
+      void (async () => {
+        try {
+          if (targetInfo.type === 'iframe') {
+            await d.sendCommand('Network.setUserAgentOverride', chrome.override(wc.session.getUserAgent()), sessionId);
+            await autoAttach(sessionId);
+          }
+          await d.sendCommand('Runtime.runIfWaitingForDebugger', {}, sessionId);
+        } catch (e: any) { log(`frame override: ${e.message}`); }
+      })();
+    });
+    autoAttach().catch((e: any) => log(`frame override: ${e.message}`));
   }
 
   private async cdp(tab: Tab, method: string, params?: object): Promise<void> {

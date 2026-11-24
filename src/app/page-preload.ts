@@ -7,8 +7,43 @@
 // Nothing else is exposed to the page.
 import { contextBridge, ipcRenderer } from 'electron';
 
+/** Only this preload knows it: with it, a function is made to look native (installNativeLook). */
+const secret = crypto.randomUUID();
+
+/**
+ * Runs first in the page's main world: the functions this preload puts into
+ * the page look native to it. Bot checks (Cloudflare & co.) compare
+ * Function.prototype.toString of the page's functions with "[native code]".
+ * Function.prototype.toString.call(fn, secret) registers a function, with
+ * the methods and accessors of its prototype (a class).
+ */
+function installNativeLook(secret: string): void {
+  const toString = Function.prototype.toString;
+  const native = new WeakMap<object, string>();
+  const add = (f: unknown, name: string) => { if (typeof f === 'function' && !native.has(f)) native.set(f, name); };
+  const proxy: typeof toString = new Proxy(toString, {
+    apply(target, self, args) {
+      if (args[0] === secret && typeof self === 'function') {
+        add(self, self.name);
+        for (const o of [self, self.prototype]) {
+          if (o == null) continue;
+          for (const [k, d] of Object.entries(Object.getOwnPropertyDescriptors(o))) {
+            if (k === 'constructor') continue;
+            add(d.value, k); add(d.get, `get ${k}`); add(d.set, `set ${k}`);
+          }
+        }
+        return '';
+      }
+      const name = native.get(self);
+      return name === undefined ? Reflect.apply(target, self, args) : `function ${name}() { [native code] }`;
+    },
+  });
+  native.set(proxy, 'toString');
+  Object.defineProperty(Function.prototype, 'toString', { value: proxy });
+}
+
 /** Runs in the page's main world; only its arguments reach back to this preload. */
-function installShare(send: (json: string) => Promise<string>): void {
+function installShare(secret: string, send: (json: string) => Promise<string>): void {
   if (!isSecureContext || 'share' in Navigator.prototype) return;
   const noFields = "Failed to execute 'share' on 'Navigator': No known share data fields supplied. If using only new fields (other than title, text and url), you must feature-detect them first.";
   let busy = false;
@@ -57,7 +92,11 @@ function installShare(send: (json: string) => Promise<string>): void {
     } finally { busy = false; }
   }
 
-  for (const [name, value] of [['share', share], ['canShare', canShare]] as const) {
+  // Methods as Chrome has them: no prototype, no parameters counted.
+  const api = { share(d?: ShareData) { return share(d); }, canShare(d?: ShareData) { return canShare(d); } };
+  for (const [name, value] of Object.entries(api)) {
+    Object.defineProperty(value, 'length', { value: 0 });
+    (Function.prototype.toString as any).call(value, secret);
     Object.defineProperty(Navigator.prototype, name, { configurable: true, enumerable: true, writable: true, value });
   }
 }
@@ -68,7 +107,7 @@ function installShare(send: (json: string) => Promise<string>): void {
  * Requests go to the app as JSON ({ op, id, … }); events come back as JSON
  * ({ id, type, … }, see SpeechEvent in speech.ts).
  */
-function installSpeech(request: (json: string) => Promise<string>, subscribe: (cb: (json: string) => void) => void): void {
+function installSpeech(secret: string, request: (json: string) => Promise<string>, subscribe: (cb: (json: string) => void) => void): void {
   /** Chrome gives up after this time without any speech. */
   const NO_SPEECH_MS = 8000;
   type Handler = ((ev: Event) => void) | null;
@@ -237,7 +276,10 @@ function installSpeech(request: (json: string) => Promise<string>, subscribe: (c
     running.get(e.id)?._receive(e);
   });
   const globals: Record<string, unknown> = { SpeechRecognition, webkitSpeechRecognition: SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent, SpeechRecognitionResultList, SpeechRecognitionResult, SpeechRecognitionAlternative };
-  for (const [name, value] of Object.entries(globals)) Object.defineProperty(window, name, { configurable: true, enumerable: false, writable: true, value });
+  for (const [name, value] of Object.entries(globals)) {
+    (Function.prototype.toString as any).call(value, secret);
+    Object.defineProperty(window, name, { configurable: true, enumerable: false, writable: true, value });
+  }
 }
 
 /**
@@ -254,13 +296,20 @@ function installSpeech(request: (json: string) => Promise<string>, subscribe: (c
  *     ends; the canvas keeps its last picture.
  * Not covered: workers (OffscreenCanvas).
  */
-function installGpuProbe(report: (draws: number) => void, onHold: (cb: (level: number) => void) => void): void {
+function installGpuProbe(secret: string, report: (draws: number) => void, onHold: (cb: (level: number) => void) => void): void {
   let draws = 0, quiet = 2;
+  /** `f` in place of the page's `orig`: same name and parameter count, native to toString (installNativeLook). */
+  const like = <T extends Function>(orig: Function, f: T): T => {
+    Object.defineProperty(f, 'length', { value: orig.length });
+    (Function.prototype.toString as any).call(f, secret);
+    return f;
+  };
   const count = (proto: any, names: string[]) => {
     for (const name of names) {
       const orig = proto?.[name];
       if (typeof orig !== 'function') continue;
-      proto[name] = function (this: unknown, ...args: unknown[]) { draws++; return orig.apply(this, args); };
+      // A method: no prototype, like the original.
+      proto[name] = like(orig, { [name](this: unknown, ...args: unknown[]) { draws++; return orig.apply(this, args); } }[name]);
     }
   };
   const DRAWS = ['drawArrays', 'drawElements', 'drawArraysInstanced', 'drawElementsInstanced', 'drawRangeElements'];
@@ -278,18 +327,18 @@ function installGpuProbe(report: (draws: number) => void, onHold: (cb: (level: n
   const raf = window.requestAnimationFrame.bind(window), caf = window.cancelAnimationFrame.bind(window);
   let held = false, nextId = 1e9;
   const waiting = new Map<number, FrameRequestCallback>(), real = new Map<number, number>();
-  window.requestAnimationFrame = function requestAnimationFrame(cb: FrameRequestCallback): number {
+  window.requestAnimationFrame = like(raf, { requestAnimationFrame(cb: FrameRequestCallback): number {
     if (!held) return raf(cb);
     const id = nextId++;
     waiting.set(id, cb);
     return id;
-  };
-  window.cancelAnimationFrame = function cancelAnimationFrame(id: number): void {
+  } }.requestAnimationFrame);
+  window.cancelAnimationFrame = like(caf, { cancelAnimationFrame(id: number): void {
     if (waiting.delete(id)) return;
     const r = real.get(id);
     if (r !== undefined) { real.delete(id); return caf(r); }
     caf(id);
-  };
+  } }.cancelAnimationFrame);
 
   // Timers: a callback that comes while held waits, the newest one per timer.
   const st = window.setTimeout.bind(window), si = window.setInterval.bind(window);
@@ -302,12 +351,12 @@ function installGpuProbe(report: (draws: number) => void, onHold: (cb: (level: n
     };
     return run;
   };
-  (window as any).setTimeout = function setTimeout(cb: unknown, ms?: number, ...args: unknown[]) {
+  (window as any).setTimeout = like(st, { setTimeout(cb: unknown, ms?: number, ...args: unknown[]) {
     return typeof cb === 'function' ? st(guard(cb, args) as TimerHandler, ms) : st(cb as TimerHandler, ms, ...args);
-  };
-  (window as any).setInterval = function setInterval(cb: unknown, ms?: number, ...args: unknown[]) {
+  } }.setTimeout);
+  (window as any).setInterval = like(si, { setInterval(cb: unknown, ms?: number, ...args: unknown[]) {
     return typeof cb === 'function' ? si(guard(cb, args) as TimerHandler, ms) : si(cb as TimerHandler, ms, ...args);
-  };
+  } }.setInterval);
 
   onHold(level => {
     held = level >= 1;
@@ -324,7 +373,9 @@ function installGpuProbe(report: (draws: number) => void, onHold: (cb: (level: n
   });
 }
 
+contextBridge.executeInMainWorld({ func: installNativeLook, args: [secret] });
 contextBridge.executeInMainWorld({ func: installGpuProbe, args: [
+  secret,
   (draws: number) => ipcRenderer.send('habitab:draws', draws),
   (cb: (level: number) => void) => { ipcRenderer.on('habitab:hold-frames', (_e, level: number | boolean) => cb(Number(level) || 0)); },
 ] });
@@ -394,11 +445,12 @@ if (window === window.top) {
 }
 
 if (process.platform === 'darwin') {
-  contextBridge.executeInMainWorld({ func: installShare, args: [(json: string) => ipcRenderer.invoke('habitab:share', json)] });
+  contextBridge.executeInMainWorld({ func: installShare, args: [secret, (json: string) => ipcRenderer.invoke('habitab:share', json)] });
 }
 // Linux has no recognizer yet (the API stays as Electron has it).
 if (process.platform === 'darwin' || process.env?.HABITAB_FAKE_SPEECH === '1') {
   contextBridge.executeInMainWorld({ func: installSpeech, args: [
+    secret,
     (json: string) => ipcRenderer.invoke('habitab:speech', json),
     (cb: (json: string) => void) => { ipcRenderer.on('habitab:speech', (_e, json: string) => cb(json)); },
   ] });
