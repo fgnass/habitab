@@ -88,7 +88,6 @@ let annotateFrame = '';
 /** Find in page: the bar lies at the top right of the selected page; the running query, its tab and the key hook. */
 let findOpen = false, findText = '';
 let findTab: Tab | undefined;
-let findKeyHandler: ((e: Electron.Event, input: Electron.Input) => void) | undefined;
 const FIND_W = 340, FIND_H = 40;
 /** The status line is open (the timeline); with an older change chosen, its screenshot lies over the page. */
 let timelineOpen = false, timelinePreview = false;
@@ -264,7 +263,7 @@ function layout(): void {
   link.setBounds(linkBounds ?? { x: 0, y: 0, width: 1, height: 1 });
   order.push(link);
   // The find bar, at the top right of the selected page (over it, under the status line).
-  if (findOpen && !sel) findOpen = false;
+  if (findOpen && !sel) { findOpen = false; findText = ''; findTab = undefined; }
   find.setVisible(findOpen);
   if (findOpen && sel) {
     const b = sel.view.getBounds();
@@ -355,12 +354,19 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'persistentProfile': { const x = manager.sessions.get(args[0]); if (x) { await manager.togglePersistentProfile(x); layout(); publish(); } return; }
     case 'sidebar': return toggleSidebarWidth();
     case 'annotate': return setAnnotating(args[0] ?? !annotating);
-    // Find in page: open the bar (keys come from the page), step, close. findText is for programmatic use (tests).
+    // Find in page: open the bar (its field takes the keys), step, close.
     case 'find': return s?.active && openFind(s.active);
+    // The user changed the text in the find field.
+    case 'findInput': {
+      if (!findOpen) return;
+      findText = typeof args[0] === 'string' ? args[0] : '';
+      return runFind({ forward: true });
+    }
+    // For programmatic use (tests): sets the text of the field, too.
     case 'findText': {
       if (!findTab && s?.active) openFind(s.active);
       const a = args[0] ?? {};
-      if (typeof a.text === 'string') findText = a.text;
+      if (typeof a.text === 'string') { findText = a.text; focusFind(findText); }
       return runFind({ forward: a.forward ?? true, next: a.next });
     }
     case 'findStep': return void (findTab && runFind({ forward: args[0] !== false, next: true }));
@@ -491,33 +497,27 @@ function setTimelineOpen(on: boolean): void {
 }
 
 /**
- * ⌘F: a find bar over the page. The page keeps keyboard focus — Chromium only
- * runs a find for a focused page — so the bar is display-only and the keys are
- * read from the page through before-input-event while the bar is open.
+ * ⌘F: a find bar over the page, with a real text field that takes the keyboard
+ * focus. The search itself runs in the page (findInPage does not need its focus).
  */
 function openFind(tab: Tab): void {
   if (findOpen && findTab !== tab) closeFind();
   findTab = tab;
   findOpen = true;
-  const wc = tab.view.webContents;
-  wc.focus();
-  if (!findKeyHandler) { findKeyHandler = (_e, input) => onFindKey(input, _e); wc.on('before-input-event', findKeyHandler); }
-  // Prefill from the page's selection (like Chrome).
-  void wc.executeJavaScript('String(getSelection()).trim()', true).then(sel => {
-    if (findOpen && findTab === tab && typeof sel === 'string' && sel && sel.length < 200) { findText = sel; runFind({ forward: true }); }
-  }).catch(() => {});
   layout();
   publish();
+  focusFind(null);
+  // Prefill from the page's selection (like Chrome).
+  void tab.view.webContents.executeJavaScript('String(getSelection()).trim()', true).then(sel => {
+    if (findOpen && findTab === tab && typeof sel === 'string' && sel && sel.length < 200) { findText = sel; focusFind(sel); runFind({ forward: true }); }
+  }).catch(() => {});
 }
 
-/** A key while the find bar is open: type into the query, step, or close. */
-function onFindKey(input: Electron.Input, e: Electron.Event): void {
-  if (!findOpen || input.type !== 'keyDown') return;
-  if (input.key === 'Escape') { e.preventDefault(); closeFind(); return; }
-  if (input.key === 'Enter') { e.preventDefault(); runFind({ forward: !input.shift, next: true }); return; }
-  if (input.key === 'Backspace') { e.preventDefault(); findText = findText.slice(0, -1); runFind({ forward: true }); return; }
-  // A single printable character, no command/control/alt (⌘G, ⌘C, … pass through).
-  if (input.key.length === 1 && !input.meta && !input.control && !input.alt) { e.preventDefault(); findText += input.key; runFind({ forward: true }); }
+/** Puts the keyboard focus into the find field and selects its text; `text` replaces the text first. */
+function focusFind(text: string | null): void {
+  if (find.webContents.isDestroyed()) return;
+  focusView(find);
+  find.webContents.send('focus-find', text);
 }
 
 /** Runs the current query on the find tab; stepping with `next`. */
@@ -525,8 +525,9 @@ function runFind(f: { forward?: boolean; next?: boolean }): void {
   const wc = findTab?.view.webContents;
   if (!wc || wc.isDestroyed()) return;
   if (!findText) { if (findTab) findTab.find = undefined; wc.stopFindInPage('clearSelection'); publish(); return; }
-  wc.focus();
-  wc.findInPage(findText, { findNext: !!f.next, forward: f.forward ?? true });
+  // Electron: findNext true begins a new search (new text); false is a follow-up step in the same search.
+  wc.findInPage(findText, { findNext: !f.next, forward: f.forward ?? true });
+  publish();
 }
 
 function closeFind(): void {
@@ -536,11 +537,11 @@ function closeFind(): void {
   const tab = findTab;
   findTab = undefined;
   if (tab && !tab.view.webContents.isDestroyed()) {
-    if (findKeyHandler) tab.view.webContents.removeListener('before-input-event', findKeyHandler);
     tab.find = undefined;
-    tab.view.webContents.stopFindInPage('keepSelection');
+    tab.view.webContents.stopFindInPage('clearSelection');
+    // The keyboard goes back to the page.
+    if (find.webContents.isFocused()) focusView(tab.view);
   }
-  findKeyHandler = undefined;
   layout();
   publish();
 }
@@ -1342,7 +1343,6 @@ function openLink(url: string): void {
   win.show();
   win.focus();
 }
-
 app.on('activate', () => { win?.show(); });
 /** Quitting asks first when an agent called a tool in this time. */
 const BUSY_MS = 15_000;

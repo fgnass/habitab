@@ -428,6 +428,7 @@ await control(`action ${sb.id} problemsSend`);
 const queuedP = await allP;
 check(queuedP.text.includes('3 console errors') && queuedP.text.includes('(2×)') && queuedP.text.includes('Boom'), 'problems: "Send All" goes to the agent as one note', queuedP.text.replace(/\n/g, ' | ').slice(0, 200));
 
+const uiEval = async (view, js) => { const n = events.length; app.stdin.write(`ui ${view} ${js}\n`); for (let i = 0; i < 50; i++) { await sleep(100); const e = events.slice(n).find(x => x.ui === view); if (e) return e; } };
 // Find in page: the query shows in the bar; matches are counted on a focused page
 await control(`select ${sb.id}`);
 await control(`action ${sb.id} findText {"text": "Broken", "forward": true}`);
@@ -436,12 +437,17 @@ for (let i = 0; i < 30 && !found; i++) { await sleep(100); found = (await state(
 check((await state()).findText === 'Broken', 'find in page: the query shows in the find bar');
 // The count only comes back when the window is frontmost (findInPage needs a focused page); assert it only then.
 if (process.env.HABITAB_TEST_VISIBLE === '1' && found) check(found.matches === 1 && found.active === 1, 'find in page: matches are counted', JSON.stringify(found));
+// The user types into the field of the find bar.
+check((await uiEval('find', 'document.getElementById("q").value'))?.result === 'Broken', 'find in page: the field of the find bar holds the query');
+await uiEval('find', '(() => { const q = document.getElementById("q"); q.value = "Bro@[k]"; q.dispatchEvent(new Event("input")); return true; })()');
+await sleep(200);
+check((await state()).findText === 'Bro@[k]', 'find in page: text typed into the field is the query', JSON.stringify((await state()).findText));
 await control(`action ${sb.id} findClose`);
 await sleep(200);
+check((await uiEval('find', 'document.getElementById("q").value'))?.result === '', 'find in page: closing empties the field');
 check((await state()).findText === null && !(await state()).sessions.find(s => s.id === sb.id).nav?.find, 'find in page: closing clears the search');
 
 // The error badge opens the DevTools console; "Send to Agent…" in the DevTools context menu sends the selection
-const uiEval = async (view, js) => { const n = events.length; app.stdin.write(`ui ${view} ${js}\n`); for (let i = 0; i < 50; i++) { await sleep(100); const e = events.slice(n).find(x => x.ui === view); if (e) return e; } };
 await control(`select ${sb.id}`);
 await control(`action ${sb.id} problems`);
 let hooked;

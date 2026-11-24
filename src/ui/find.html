@@ -3,22 +3,21 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
 <link rel="stylesheet" href="style.css">
 <style>
-  /* Find in page: a small bar at the top right of the page (like Chrome). The
-     query is typed into the page, so this bar only shows it; it never focuses. */
+  /* Find in page: a small bar at the top right of the page (like Chrome). */
   html, body { background: transparent; overflow: hidden; }
   #bar { position: fixed; inset: 0 4px 4px 4px; display: flex; align-items: center; gap: 2px; padding: 0 4px 0 10px;
     background: var(--bar); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
-  #q { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #q.empty { color: var(--text-3); }
+  #q { flex: 1; min-width: 0; height: 100%; padding: 0; margin: 0; border: 0; outline: 0; background: none; box-shadow: none; }
+  #q::placeholder { color: var(--text-3); }
   #count { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 6px; }
   #count.none { color: var(--red); }
   button { padding: 3px; }
 </style>
 <div id="bar">
-  <span id="q" class="empty">Find in page</span>
+  <input id="q" type="text" placeholder="Find in page" spellcheck="false" autocomplete="off" aria-label="Find in page">
   <span id="count"></span>
-  <button id="prev" title="Previous (⇧⌘G)"><span data-icon="chevron-up"></span></button>
-  <button id="next" title="Next (⌘G)"><span data-icon="chevron-down"></span></button>
+  <button id="prev" title="Previous (⇧⏎)"><span data-icon="chevron-up"></span></button>
+  <button id="next" title="Next (⏎)"><span data-icon="chevron-down"></span></button>
   <button id="close" title="Close (Esc)"><span data-icon="x"></span></button>
 </div>
 <script src="icons.js"></script>
