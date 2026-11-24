@@ -998,14 +998,22 @@ async function deliverFeedback(s: Session, f: { text: string; comment: string; u
 }
 let lastClipboard = '';
 
-/** Native menu of a session in the sidebar, from its header or one of its tabs (x, y: window coordinates). */
+/** An SF Symbol for a native menu item (macOS only; other systems show no icon). */
+const sym = (name: string): Electron.NativeImage | undefined => process.platform === 'darwin' ? nativeImage.createMenuSymbol(name) : undefined;
+
+/**
+ * Native menu of a session in the sidebar, from its header or one of its tabs (x, y: window coordinates).
+ * Three groups: what is kept for the project, what is kept for the session, and actions.
+ */
 function sessionMenu(s: Session, x: number, y: number, tabId?: number): void {
   const tab = s.tabs.find(t => t.id === tabId);
   const project = s.meta.projectName ?? 'this project';
   const persistent = manager.hasPersistentProfile(s);
+  const permissions = sitePermissionItems(s);
   Menu.buildFromTemplate([
+    { label: `Project “${project}”`, type: 'header' },
     {
-      label: `Persistent Profile for “${project}”`, type: 'checkbox', checked: persistent, enabled: !!manager.projectRoot(s),
+      label: 'Persistent Profile', type: 'checkbox', checked: persistent, enabled: !!manager.projectRoot(s), icon: sym('externaldrive'),
       click: async () => {
         if (persistent) {
           const r = await dialog.showMessageBox(win, {
@@ -1019,30 +1027,32 @@ function sessionMenu(s: Session, x: number, y: number, tabId?: number): void {
         layout(); publish();
       },
     },
-    { label: 'Keep Browser After Session Ends', type: 'checkbox', checked: s.pinned, click: () => { s.pinned = !s.pinned; publish(); } },
-    { label: 'Mute Session', type: 'checkbox', checked: s.muted, click: () => manager.setMuted(s, !s.muted) },
+    {
+      label: 'Pause Debugger While You Test', type: 'checkbox', checked: manager.pausesDebugger(s), enabled: !!manager.projectRoot(s), icon: sym('ant'),
+      click: () => manager.setPausesDebugger(s, !manager.pausesDebugger(s)),
+    },
     // Stored answers of the project (camera/microphone, clipboard), one per origin; a click forgets it (the page asks again).
-    ...(sitePermissionItems(s).length ? [{ label: 'Site Permissions', submenu: sitePermissionItems(s) }] : []),
+    ...(permissions.length ? [{ label: 'Site Permissions', icon: sym('hand.raised'), submenu: permissions }] : []),
     // A dev server on plain http under its own host name (e.g. app.test → 127.0.0.1) is no secure
     // context, so camera, clipboard & co. are missing. Chromium can treat such an origin as secure.
     ...secureOriginItems(tab ?? s.active),
-    {
-      label: 'Pause Debugger While You Test', type: 'checkbox', checked: manager.pausesDebugger(s), enabled: !!manager.projectRoot(s),
-      click: () => manager.setPausesDebugger(s, !manager.pausesDebugger(s)),
-    },
     { type: 'separator' },
-    { label: 'Copy Session ID', click: () => clipboard.writeText(s.meta.agentSessionId ?? s.id) },
-    ...(tab?.problems.length ? [{ label: sendLabel(tab.problems.length), click: () => sendProblems(s, tab) }] : []),
-    ...(tab ? [{ label: 'Close Tab', click: () => manager.closeTab(s, tab) }] : []),
-    { label: 'Close All Tabs of Session', enabled: s.tabs.length > 0, click: () => { manager.closeBrowser(s); layout(); } },
-    { label: 'Remove from List', enabled: s.ended, click: () => manager.remove(s) },
+    { label: 'Session', type: 'header' },
+    { label: 'Keep Browser After Session Ends', type: 'checkbox', checked: s.pinned, icon: sym('pin'), click: () => { s.pinned = !s.pinned; publish(); } },
+    { label: 'Mute Session', type: 'checkbox', checked: s.muted, icon: sym('speaker.slash'), click: () => manager.setMuted(s, !s.muted) },
+    { label: 'Copy Session ID', icon: sym('doc.on.doc'), click: () => clipboard.writeText(s.meta.agentSessionId ?? s.id) },
+    { type: 'separator' },
+    ...(tab?.problems.length ? [{ label: sendLabel(tab.problems.length), icon: sym('exclamationmark.bubble'), click: () => sendProblems(s, tab) }] : []),
+    ...(tab ? [{ label: 'Close Tab', icon: sym('xmark'), click: () => manager.closeTab(s, tab, 'context menu') }] : []),
+    { label: 'Close All Tabs of Session', enabled: s.tabs.length > 0, icon: sym('xmark.square'), click: () => { manager.closeBrowser(s); layout(); } },
+    { label: 'Remove from List', enabled: s.ended, icon: sym('trash'), click: () => manager.remove(s) },
   ]).popup({ window: win, x, y });
 }
 
 function sitePermissionItems(s: Session): Electron.MenuItemConstructorOptions[] {
   const name = { media: 'Camera & Microphone', clipboard: 'Clipboard' } as const;
   return (['media', 'clipboard'] as const).flatMap(kind => Object.entries(manager.siteAccessOrigins(s, kind)).map(([origin, answer]) => ({
-    label: `${name[kind]} ${answer === 'allow' ? 'allowed' : 'blocked'}: ${origin} — Forget`, click: () => manager.setSiteAccess(s, kind, origin, undefined),
+    label: `${name[kind]} ${answer === 'allow' ? 'allowed' : 'blocked'}: ${origin} — Forget`, icon: sym(kind === 'media' ? 'video' : 'clipboard'), click: () => manager.setSiteAccess(s, kind, origin, undefined),
   })));
 }
 
@@ -1062,8 +1072,8 @@ function secureOriginItems(tab: Tab | undefined): Electron.MenuItemConstructorOp
   const list = prefs().secureOrigins ?? [];
   const origin = insecureOrigin(tab);
   const items: Electron.MenuItemConstructorOptions[] = [];
-  if (origin && !list.includes(origin)) items.push({ label: `Treat ${origin} as Secure…`, click: () => void changeSecureOrigins([...list, origin], `${origin} is treated as a secure context (camera, clipboard and other APIs that need https).`) });
-  for (const o of list) items.push({ label: `Stop Treating ${o} as Secure…`, click: () => void changeSecureOrigins(list.filter(x => x !== o), `${o} is a normal http origin again.`) });
+  if (origin && !list.includes(origin)) items.push({ label: `Treat ${origin} as Secure…`, icon: sym('lock.open'), click: () => void changeSecureOrigins([...list, origin], `${origin} is treated as a secure context (camera, clipboard and other APIs that need https).`) });
+  for (const o of list) items.push({ label: `Stop Treating ${o} as Secure…`, icon: sym('lock'), click: () => void changeSecureOrigins(list.filter(x => x !== o), `${o} is a normal http origin again.`) });
   return items;
 }
 
