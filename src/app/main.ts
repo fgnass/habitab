@@ -337,7 +337,7 @@ async function action(name: string, ...args: any[]): Promise<unknown> {
     case 'devtools': return s && manager.toggleDevtools(s);
     case 'closeTab': {
       const x = manager.sessions.get(args[0]), target = x?.tabs.find(t => t.id === args[1]);
-      return x && target && manager.closeTab(x, target);
+      return x && target && manager.closeTab(x, target, 'button');
     }
     case 'hold': return s && manager.toggleHold(s);
     case 'fork': return s && manager.forkTab(s);
@@ -1186,7 +1186,7 @@ function updateMenu(): void {
       { role: 'quit' as const, label: 'Quit Habitab' },
     ] }] : []),
     { label: 'File', submenu: [
-      { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: !!s?.active, click: () => s?.active && manager.closeTab(s, s.active) },
+      { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: !!s?.active, click: () => s?.active && manager.closeTab(s, s.active, 'app menu') },
       { type: 'separator' },
       { label: 'Edit Address', accelerator: 'CmdOrCtrl+L', click: () => { topbar.webContents.focus(); topbar.webContents.send('focus-url'); } },
       { label: 'Search Sessions', accelerator: 'CmdOrCtrl+K', click: () => { sidebar.webContents.focus(); sidebar.webContents.send('focus-search'); } },

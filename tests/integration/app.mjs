@@ -260,6 +260,11 @@ await sleep(1500);
 const stuckState = await state();
 check(stuckEarly && !stuckState.sessions.find(s => s.id === sa.id).tabs.some(t => t.url.endsWith('/third')) && !stuckState.errors.length, 'a tab that does not close is removed after the close timeouts', JSON.stringify({ stuckEarly, errors: stuckState.errors }));
 check(!(await a.tool('list_pages')).text.includes('/third'), 'the removed tab is gone for the agent too');
+{
+  const closeLog = fs.readFileSync(path.join(env.HABITAB_HOME, 'logs', 'app.log'), 'utf8').split('\n').filter(l => l.includes('close'));
+  check(closeLog.some(l => /close \(test\): \S+\/third \[.*agent connected\]/.test(l)) && closeLog.some(l => /close: \S+\/third destroyed after \d+ ms/.test(l)),
+    'the log has each close with its trigger and the time until the contents was destroyed', closeLog.slice(-6).join(' | '));
+}
 check((await a.tool('evaluate_script', { pageId: pa2, function: '() => 3' })).text.includes('3'), 'agent continues after a stuck tab was removed');
 await a.tool('select_page', { pageId: pa2 });
 

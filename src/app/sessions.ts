@@ -115,6 +115,8 @@ export interface Tab {
   gone?: string;
   /** The tab left the session (closed, or removed because its contents did not close, see closeTab). */
   closed?: boolean;
+  /** The first close of the tab was asked for then (see closeTab). */
+  closeAt?: number;
   /** Small JPEG of the tab for the sidebar (data URL). */
   thumb?: string;
   thumbTimer?: NodeJS.Timeout;
@@ -611,7 +613,7 @@ export class SessionManager {
           const t = s.tabs.find(x => x.targetId === targetId);
           if (!t) return false;
           s.agentClosed = true;
-          this.closeTab(s, t);
+          this.closeTab(s, t, 'agent');
           return true;
         },
         tabSize: targetId => {
@@ -938,10 +940,23 @@ export class SessionManager {
    * close tried again, and after another CLOSE_TIMEOUT_MS the contents is
    * destroyed and the tab leaves the session.
    */
-  closeTab(s: Session, tab: Tab): void {
-    const wc = tab.view.webContents;
-    if (tab.closed || wc.isDestroyed()) return;
+  closeTab(s: Session, tab: Tab, by: string): void {
+    const wc = tab.view.webContents as WebContents | undefined;
+    // Diagnosis: every close goes to the log with its trigger, and how long the contents took to go.
+    if (tab.closed || !wc || wc.isDestroyed()) {
+      log(`close (${by}): tab ${tab.id} of ${s.id} is gone already (${tab.closed ? 'left the session' : 'contents destroyed, still in the session'})`);
+      return;
+    }
     const url = wc.getURL();
+    const now = Date.now();
+    const state = [tab.gone && `renderer gone (${tab.gone})`, tab.hungSince && 'hung', tab.busy && 'busy', tab.debuggerPaused && 'debugger paused', tab.own && 'own', wc.isCrashed() && 'crashed', s.line ? 'agent connected' : 'agent not connected'].filter(Boolean).join(', ');
+    if (tab.closeAt) {
+      log(`close (${by}): ${url} again, ${now - tab.closeAt} ms after the first close [${state}]`);
+    } else {
+      tab.closeAt = now;
+      log(`close (${by}): ${url} [${state}]`);
+      wc.once('destroyed', () => log(`close: ${url} destroyed after ${Date.now() - now} ms`));
+    }
     wc.close();
     setTimeout(() => {
       if (tab.closed || wc.isDestroyed()) return;
@@ -980,7 +995,7 @@ export class SessionManager {
 
   closeBrowser(s: Session): void {
     this.closeDevtools(s);
-    for (const t of [...s.tabs]) this.closeTab(s, t);
+    for (const t of [...s.tabs]) this.closeTab(s, t, 'browser closed');
     // The views go away asynchronously; a new browser must not reuse them.
     s.active = undefined;
     s.agentTab = undefined;
